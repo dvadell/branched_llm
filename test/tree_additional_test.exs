@@ -140,5 +140,72 @@ defmodule BranchedLLM.TreeAdditionalTest do
       # System should still be there, deleted user message filtered out
       assert %Context{} = context
     end
+
+    test "handles assistant messages in context rebuild", %{tree: tree} do
+      tree = Tree.add_user_message(tree, "Hello")
+      tree = Tree.add_user_message(tree, "World")
+      msg = List.last(tree.branches["main"].messages)
+
+      # Update a message to trigger rebuild with assistant message present
+      # First inject an assistant message, then update to trigger rebuild
+      assistant_msg = Message.new(:assistant, "Assistant says hi")
+      tree = put_in(tree.branches["main"].messages, tree.branches["main"].messages ++ [assistant_msg])
+
+      # Now update the assistant message to trigger rebuild_context
+      tree = Tree.update_message(tree, assistant_msg.id, "Updated assistant response")
+
+      messages = tree.branches["main"].messages
+      last_msg = List.last(messages)
+      assert last_msg.content == "Updated assistant response"
+      assert last_msg.sender == :assistant
+    end
+
+    test "handles tool and unknown sender messages in context rebuild", %{tree: tree} do
+      tree = Tree.add_user_message(tree, "Hello")
+      # Inject tool and unknown sender messages, then update to trigger rebuild
+      tool_msg = Message.new(:tool, "tool result")
+      unknown_msg = Message.new(:unknown_type, "unknown")
+      new_messages = tree.branches["main"].messages ++ [tool_msg, unknown_msg]
+      tree = put_in(tree.branches["main"].messages, new_messages)
+
+      # Trigger rebuild by updating the tool message
+      tree = Tree.update_message(tree, tool_msg.id, "updated tool result")
+
+      context = Tree.get_current_context(tree)
+      assert %Context{} = context
+    end
+  end
+
+  describe "generate_name_from_messages" do
+    test "returns empty string when no user messages exist", %{tree: tree} do
+      # Branch off from system message only (index 0, which is :system sender)
+      system_msg_id = List.first(tree.branches["main"].messages).id
+      tree = Tree.branch_off(tree, system_msg_id)
+      branch = tree.branches[tree.current_branch_id]
+      # The branch only has the system message, no user messages
+      assert branch.name == ""
+    end
+  end
+
+  describe "prune_branch/2 with nil parent_message_id" do
+    test "cleans up child branches when pruned branch has nil parent_message_id", %{tree: tree} do
+      # Create a branch by branching off from system message (parent_message_id is set to system_msg_id)
+      # To get nil parent_message_id, we need to manually construct via from_map
+      tree = Tree.add_user_message(tree, "M1")
+      m1_id = List.last(tree.branches["main"].messages).id
+      tree = Tree.branch_off(tree, m1_id)
+      child_id = tree.current_branch_id
+
+      # Now manually set the child's parent_message_id to nil via map manipulation
+      child_branch = tree.branches[child_id]
+      updated_child = %{child_branch | parent_message_id: nil}
+      tree = put_in(tree.branches[child_id], updated_child)
+
+      # Also add a child_branches entry for nil (simulating the nil key case)
+      tree = put_in(tree.child_branches[nil], [child_id])
+
+      tree = Tree.prune_branch(tree, child_id)
+      refute Map.has_key?(tree.branches, child_id)
+    end
   end
 end

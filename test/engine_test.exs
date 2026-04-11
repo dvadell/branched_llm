@@ -128,5 +128,21 @@ defmodule BranchedLLM.EngineTest do
       assert last_msg.sender == :assistant
       assert returned_tool_calls == tool_calls
     end
+
+    test "creates new assistant message with tool_calls when last is not assistant", %{tree: tree} do
+      tree = Tree.add_user_message(tree, "Hello")
+
+      tool_calls = [make_tool_call("call_1", "test", %{})]
+      context_builder = fn content -> Context.new([Context.assistant(content)]) end
+
+      {:execute_tools, updated_tree, returned_tool_calls} =
+        Engine.process_response(tree, "main", {:tool_calls, tool_calls, context_builder})
+
+      messages = updated_tree.branches["main"].messages
+      last_msg = List.last(messages)
+      assert last_msg.sender == :assistant
+      assert last_msg.metadata[:tool_calls] == tool_calls
+      assert returned_tool_calls == tool_calls
+    end
   end
 end
