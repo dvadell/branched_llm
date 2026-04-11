@@ -5,10 +5,23 @@ defmodule BranchedLLM.Engine do
 
   alias BranchedLLM.Message
 
+  @type tree :: BranchedLLM.Tree.t()
+  @type response ::
+          {:chunk, String.t()}
+          | {:error, String.t()}
+          | {:tool_calls, list(), function()}
+          | {:done, function()}
+  @type result ::
+          {:continue, tree()}
+          | {:halt, tree(), String.t()}
+          | {:execute_tools, tree(), list()}
+          | {:ok, tree()}
+
   @doc """
-  Processes a raw LLM response (streaming chunk, error, or tool calls) 
+  Processes a raw LLM response (streaming chunk, error, or tool calls)
   and returns the next action and updated tree.
   """
+  @spec process_response(tree(), String.t(), response()) :: result()
   def process_response(tree, branch_id, {:chunk, chunk}) do
     updated_tree = append_chunk(tree, branch_id, chunk)
     {:continue, updated_tree}
@@ -22,7 +35,9 @@ defmodule BranchedLLM.Engine do
   def process_response(tree, branch_id, {:tool_calls, tool_calls, context_builder}) do
     # When tool calls are found, we need the caller to execute them.
     # We update the tree to reflect that tools are being called.
-    updated_tree = finish_assistant_message(tree, branch_id, context_builder, tool_calls: tool_calls)
+    updated_tree =
+      finish_assistant_message(tree, branch_id, context_builder, tool_calls: tool_calls)
+
     {:execute_tools, updated_tree, tool_calls}
   end
 
@@ -70,7 +85,10 @@ defmodule BranchedLLM.Engine do
           branch.messages
 
         {%{sender: :assistant}, calls} ->
-          List.replace_at(branch.messages, -1, %{last_msg | metadata: Map.put(last_msg.metadata, :tool_calls, calls)})
+          List.replace_at(branch.messages, -1, %{
+            last_msg
+            | metadata: Map.put(last_msg.metadata, :tool_calls, calls)
+          })
 
         {_, []} ->
           branch.messages ++ [Message.new(:assistant, content)]

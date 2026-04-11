@@ -1,8 +1,8 @@
 defmodule BranchedLLM.EngineTest do
   use ExUnit.Case, async: true
   alias BranchedLLM.Engine
-  alias BranchedLLM.Tree
   alias BranchedLLM.Message
+  alias BranchedLLM.Tree
   alias ReqLLM.Context
   import Mox
 
@@ -25,7 +25,12 @@ defmodule BranchedLLM.EngineTest do
   describe "process_response/3 with :chunk" do
     test "appends chunk to existing assistant message", %{tree: tree} do
       tree = Tree.add_user_message(tree, "Hello")
-      tree = put_in(tree.branches["main"].messages, tree.branches["main"].messages ++ [Message.new(:assistant, "Hi")])
+
+      tree =
+        put_in(
+          tree.branches["main"].messages,
+          tree.branches["main"].messages ++ [Message.new(:assistant, "Hi")]
+        )
 
       {:continue, updated_tree} = Engine.process_response(tree, "main", {:chunk, " there"})
 
@@ -59,7 +64,8 @@ defmodule BranchedLLM.EngineTest do
       tree = Tree.add_user_message(tree, "Hello")
       initial_msg_count = length(tree.branches["main"].messages)
 
-      {:halt, updated_tree, reason} = Engine.process_response(tree, "main", {:error, "Connection failed"})
+      {:halt, updated_tree, reason} =
+        Engine.process_response(tree, "main", {:error, "Connection failed"})
 
       assert reason == "Connection failed"
       messages = updated_tree.branches["main"].messages
@@ -73,7 +79,12 @@ defmodule BranchedLLM.EngineTest do
   describe "process_response/3 with :tool_calls" do
     test "returns execute_tools action with tool calls", %{tree: tree} do
       tree = Tree.add_user_message(tree, "Hello")
-      tree = put_in(tree.branches["main"].messages, tree.branches["main"].messages ++ [Message.new(:assistant, "")])
+
+      tree =
+        put_in(
+          tree.branches["main"].messages,
+          tree.branches["main"].messages ++ [Message.new(:assistant, "")]
+        )
 
       tool_calls = [make_tool_call("call_1", "get_weather", %{})]
       context_builder = fn content -> Context.new([Context.assistant(content)]) end
@@ -91,7 +102,12 @@ defmodule BranchedLLM.EngineTest do
   describe "process_response/3 with :done" do
     test "finishes assistant message and returns ok", %{tree: tree} do
       tree = Tree.add_user_message(tree, "Hello")
-      tree = put_in(tree.branches["main"].messages, tree.branches["main"].messages ++ [Message.new(:assistant, "Hello back")])
+
+      tree =
+        put_in(
+          tree.branches["main"].messages,
+          tree.branches["main"].messages ++ [Message.new(:assistant, "Hello back")]
+        )
 
       context_builder = fn content -> Context.new([Context.assistant(content)]) end
 
@@ -115,7 +131,12 @@ defmodule BranchedLLM.EngineTest do
 
     test "adds tool_calls metadata when provided with existing assistant message", %{tree: tree} do
       tree = Tree.add_user_message(tree, "Hello")
-      tree = put_in(tree.branches["main"].messages, tree.branches["main"].messages ++ [Message.new(:assistant, "Response")])
+
+      tree =
+        put_in(
+          tree.branches["main"].messages,
+          tree.branches["main"].messages ++ [Message.new(:assistant, "Response")]
+        )
 
       tool_calls = [make_tool_call("call_1", "test", %{})]
       context_builder = fn content -> Context.new([Context.assistant(content)]) end

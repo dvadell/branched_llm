@@ -1,7 +1,7 @@
 defmodule BranchedLLM.TreeAdditionalTest do
   use ExUnit.Case, async: true
-  alias BranchedLLM.Tree
   alias BranchedLLM.Message
+  alias BranchedLLM.Tree
   alias ReqLLM.Context
   import Mox
 
@@ -144,12 +144,14 @@ defmodule BranchedLLM.TreeAdditionalTest do
     test "handles assistant messages in context rebuild", %{tree: tree} do
       tree = Tree.add_user_message(tree, "Hello")
       tree = Tree.add_user_message(tree, "World")
-      msg = List.last(tree.branches["main"].messages)
+      _msg = List.last(tree.branches["main"].messages)
 
       # Update a message to trigger rebuild with assistant message present
       # First inject an assistant message, then update to trigger rebuild
       assistant_msg = Message.new(:assistant, "Assistant says hi")
-      tree = put_in(tree.branches["main"].messages, tree.branches["main"].messages ++ [assistant_msg])
+
+      tree =
+        put_in(tree.branches["main"].messages, tree.branches["main"].messages ++ [assistant_msg])
 
       # Now update the assistant message to trigger rebuild_context
       tree = Tree.update_message(tree, assistant_msg.id, "Updated assistant response")

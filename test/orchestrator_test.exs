@@ -1,9 +1,9 @@
 defmodule BranchedLLM.OrchestratorTest do
-  use ExUnit.Case, async: true
+  use ExUnit.Case, async: false
   import Mox
+  alias BranchedLLM.Message
   alias BranchedLLM.Orchestrator
   alias BranchedLLM.Tree
-  alias BranchedLLM.Message
   alias ReqLLM.Context
 
   setup :set_mox_from_context
@@ -77,9 +77,15 @@ defmodule BranchedLLM.OrchestratorTest do
   end
 
   test "run/4 passes llm_tools and tool_usage_counts", %{tree: tree} do
-    expect(BranchedLLM.ChatMock, :send_message_stream, 1, fn _msg, _ctx, opts ->
-      # Verify tools are passed through
-      assert Keyword.has_key?(opts, :tools)
+    call_count = :counters.new(1, [])
+
+    expect(BranchedLLM.ChatMock, :send_message_stream, 2, fn _msg, _ctx, opts ->
+      :counters.add(call_count, 1, 1)
+
+      # Verify tools are passed through on first call
+      if :counters.get(call_count, 1) == 1 do
+        assert Keyword.has_key?(opts, :tools)
+      end
 
       stream = Stream.map(["response"], &%{text: &1, type: :content})
 
@@ -97,7 +103,12 @@ defmodule BranchedLLM.OrchestratorTest do
     end)
 
     mock_tool = %{name: "test_tool"}
-    Orchestrator.run(tree, "main", "Hi", caller_pid: self(), llm_tools: [mock_tool], tool_usage_counts: %{"test_tool" => 0})
+
+    Orchestrator.run(tree, "main", "Hi",
+      caller_pid: self(),
+      llm_tools: [mock_tool],
+      tool_usage_counts: %{"test_tool" => 0}
+    )
 
     assert_receive {:llm_chunk, "main", "response"}, 500
     assert_receive {:llm_done, "main", _builder}, 500
@@ -106,11 +117,10 @@ defmodule BranchedLLM.OrchestratorTest do
   test "run/4 handles tool calls and recurses", %{tree: tree} do
     tool_call = ReqLLM.ToolCall.new("call_1", "get_weather", ~s({"location": "NYC"}))
 
-    # First call returns tool_calls, second call (after recursion) returns done
-    expect(BranchedLLM.ChatMock, :send_message_stream, fn _msg, _ctx, opts ->
+    # First call returns tool_calls
+    expect(BranchedLLM.ChatMock, :send_message_stream, 1, fn _msg, _ctx, opts ->
       assert Keyword.has_key?(opts, :tools)
 
-      # First time: return tool calls
       stream = Stream.map([], &%{text: &1, type: :content})
 
       response = %ReqLLM.StreamResponse{
@@ -127,10 +137,10 @@ defmodule BranchedLLM.OrchestratorTest do
     end)
 
     # Mock execute_tool for the tool call
-    expect(BranchedLLM.ChatMock, :execute_tool, fn _tool, _args -> {:ok, "Sunny"} end)
+    expect(BranchedLLM.ChatMock, :execute_tool, 1, fn _tool, _args -> {:ok, "Sunny"} end)
 
-    # Stub for the recursive call (after tool execution)
-    stub(BranchedLLM.ChatMock, :send_message_stream, fn _msg, _ctx, _opts ->
+    # Second call (after recursion) returns done
+    expect(BranchedLLM.ChatMock, :send_message_stream, 1, fn _msg, _ctx, _opts ->
       stream = Stream.map(["Final answer"], &%{text: &1, type: :content})
 
       response = %ReqLLM.StreamResponse{
@@ -160,7 +170,7 @@ defmodule BranchedLLM.OrchestratorTest do
     tool_call = ReqLLM.ToolCall.new("call_1", "limited_tool", ~s({}))
 
     # First call returns tool_calls
-    expect(BranchedLLM.ChatMock, :send_message_stream, fn _msg, _ctx, opts ->
+    expect(BranchedLLM.ChatMock, :send_message_stream, 1, fn _msg, _ctx, opts ->
       assert Keyword.has_key?(opts, :tools)
       stream = Stream.map([], &%{text: &1, type: :content})
 
@@ -178,10 +188,10 @@ defmodule BranchedLLM.OrchestratorTest do
     end)
 
     # Mock execute_tool
-    expect(BranchedLLM.ChatMock, :execute_tool, fn _tool, _args -> {:ok, "result"} end)
+    expect(BranchedLLM.ChatMock, :execute_tool, 1, fn _tool, _args -> {:ok, "result"} end)
 
     # After tool execution, the recursive call should return done
-    stub(BranchedLLM.ChatMock, :send_message_stream, fn _msg, _ctx, _opts ->
+    expect(BranchedLLM.ChatMock, :send_message_stream, 1, fn _msg, _ctx, _opts ->
       stream = Stream.map(["done"], &%{text: &1, type: :content})
 
       response = %ReqLLM.StreamResponse{
@@ -199,7 +209,12 @@ defmodule BranchedLLM.OrchestratorTest do
 
     # Pass tool_usage_counts with count already at 10 (limit)
     mock_tool = %{name: "limited_tool"}
-    Orchestrator.run(tree, "main", "Use tool", caller_pid: self(), llm_tools: [mock_tool], tool_usage_counts: %{limited_tool: 10})
+
+    Orchestrator.run(tree, "main", "Use tool",
+      caller_pid: self(),
+      llm_tools: [mock_tool],
+      tool_usage_counts: %{"limited_tool" => 10}
+    )
 
     assert_receive {:llm_tool_calls, "main", _, _}, 500
     assert_receive {:llm_status, "main", _}, 500

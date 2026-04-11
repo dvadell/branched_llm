@@ -6,7 +6,8 @@ defmodule BranchedLLM.Tree do
   alias BranchedLLM.Message
   alias ReqLLM.Context
 
-  @derive {Jason.Encoder, only: [:branches, :branch_ids, :current_branch_id, :child_branches, :chat_module]}
+  @derive {Jason.Encoder,
+           only: [:branches, :branch_ids, :current_branch_id, :child_branches, :chat_module]}
   defstruct [
     :branches,
     :branch_ids,
@@ -36,6 +37,7 @@ defmodule BranchedLLM.Tree do
   @doc """
   Initializes a new tree.
   """
+  @spec new(module(), [Message.t()], Context.t()) :: t()
   def new(chat_module, initial_messages, initial_context) do
     initial_branch_id = "main"
 
@@ -62,6 +64,7 @@ defmodule BranchedLLM.Tree do
   @doc """
   Changes the active branch.
   """
+  @spec switch_branch(t(), String.t()) :: t()
   def switch_branch(%__MODULE__{} = t, branch_id) do
     if Map.has_key?(t.branches, branch_id), do: %{t | current_branch_id: branch_id}, else: t
   end
@@ -69,11 +72,15 @@ defmodule BranchedLLM.Tree do
   @doc """
   Adds a user message to the current branch.
   """
+  @spec add_user_message(t(), String.t()) :: t()
   def add_user_message(%__MODULE__{} = t, content) do
     user_message = Message.new(:user, content)
     branch = t.branches[t.current_branch_id]
 
-    name = if branch.name == "" or branch.name == "Main Conversation", do: generate_name(content), else: branch.name
+    name =
+      if branch.name == "" or branch.name == "Main Conversation",
+        do: generate_name(content),
+        else: branch.name
 
     updated_branch = %{branch | name: name, messages: branch.messages ++ [user_message]}
     %{t | branches: Map.put(t.branches, t.current_branch_id, updated_branch)}
@@ -82,6 +89,7 @@ defmodule BranchedLLM.Tree do
   @doc """
   Updates a message's content and rebuilds the branch context.
   """
+  @spec update_message(t(), String.t(), String.t()) :: t()
   def update_message(%__MODULE__{} = t, message_id, new_content) do
     branch = t.branches[t.current_branch_id]
 
@@ -96,6 +104,7 @@ defmodule BranchedLLM.Tree do
   @doc """
   Deletes a message (marks it as deleted) and rebuilds the branch context.
   """
+  @spec delete_message(t(), String.t()) :: t()
   def delete_message(%__MODULE__{} = t, message_id) do
     branch = t.branches[t.current_branch_id]
 
@@ -110,6 +119,7 @@ defmodule BranchedLLM.Tree do
   @doc """
   Inserts a message after a specific message and rebuilds context.
   """
+  @spec insert_message(t(), String.t(), Message.t()) :: t()
   def insert_message(%__MODULE__{} = t, after_message_id, new_message) do
     branch = t.branches[t.current_branch_id]
     idx = Enum.find_index(branch.messages, fn msg -> msg.id == after_message_id end)
@@ -133,6 +143,7 @@ defmodule BranchedLLM.Tree do
   @doc """
   Creates a new branch from a message ID.
   """
+  @spec branch_off(t(), String.t()) :: t()
   def branch_off(%__MODULE__{} = t, message_id) do
     messages = t.branches[t.current_branch_id].messages
     idx = Enum.find_index(messages, fn msg -> msg.id == message_id end)
@@ -159,7 +170,8 @@ defmodule BranchedLLM.Tree do
         t
         | branches: Map.put(t.branches, new_branch_id, new_branch),
           branch_ids: t.branch_ids ++ [new_branch_id],
-          child_branches: Map.update(t.child_branches, message_id, [new_branch_id], &[new_branch_id | &1]),
+          child_branches:
+            Map.update(t.child_branches, message_id, [new_branch_id], &[new_branch_id | &1]),
           current_branch_id: new_branch_id
       }
     end
@@ -168,6 +180,7 @@ defmodule BranchedLLM.Tree do
   @doc """
   Prunes a branch and all its descendants.
   """
+  @spec prune_branch(t(), String.t()) :: t()
   def prune_branch(%__MODULE__{} = t, branch_id) do
     if branch_id == "main" do
       t
@@ -194,19 +207,26 @@ defmodule BranchedLLM.Tree do
 
   defp cleanup_child_branches(child_branches, branch_metadata) do
     case branch_metadata.parent_message_id do
-      nil -> child_branches
-      msg_id -> Map.update(child_branches, msg_id, [], fn children -> children -- [branch_metadata.branch_id] end)
+      nil ->
+        child_branches
+
+      msg_id ->
+        Map.update(child_branches, msg_id, [], fn children ->
+          children -- [branch_metadata.branch_id]
+        end)
     end
   end
 
   @doc """
   Exports the tree to a plain map for serialization.
   """
+  @spec to_map(t()) :: map()
   def to_map(%__MODULE__{} = t), do: Map.from_struct(t)
 
   @doc """
   Hydrates a tree from a map.
   """
+  @spec from_map(map(), module()) :: t()
   def from_map(map, chat_module) when is_map(map) do
     struct(__MODULE__, Map.put(map, :chat_module, chat_module))
   end
@@ -214,6 +234,7 @@ defmodule BranchedLLM.Tree do
   @doc """
   Returns the messages of the active branch.
   """
+  @spec get_current_messages(t()) :: [Message.t()]
   def get_current_messages(%__MODULE__{} = t) do
     t.branches[t.current_branch_id].messages
   end
@@ -221,6 +242,7 @@ defmodule BranchedLLM.Tree do
   @doc """
   Returns the context of the active branch.
   """
+  @spec get_current_context(t()) :: Context.t()
   def get_current_context(%__MODULE__{} = t) do
     t.branches[t.current_branch_id].context
   end

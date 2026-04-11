@@ -1,7 +1,7 @@
 defmodule BranchedLLM.TreeBranchTest do
   use ExUnit.Case, async: true
-  alias BranchedLLM.Tree
   alias BranchedLLM.Message
+  alias BranchedLLM.Tree
   alias ReqLLM.Context
   import Mox
 

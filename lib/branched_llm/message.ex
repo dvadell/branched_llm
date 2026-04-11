@@ -26,6 +26,7 @@ defmodule BranchedLLM.Message do
   @doc """
   Creates a new message.
   """
+  @spec new(sender(), String.t(), Keyword.t()) :: t()
   def new(sender, content, opts \\ []) do
     %__MODULE__{
       id: Keyword.get(opts, :id, Ecto.UUID.generate()),
