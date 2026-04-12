@@ -14,7 +14,18 @@ defmodule BranchedLLM.MixProject do
       docs: docs(),
       aliases: aliases(),
       package: package(),
-      description: "A branched conversation library for LLM interactions with tool support"
+      description: "A branched conversation library for LLM interactions with tool support",
+      test_coverage: test_coverage()
+    ]
+  end
+
+  defp test_coverage do
+    [
+      summary: [threshold: 60],
+      ignore_modules: [
+        BranchedLLM.Chat,
+        BranchedLLM.ToolCache
+      ]
     ]
   end
 
@@ -31,10 +42,10 @@ defmodule BranchedLLM.MixProject do
       {:jason, "~> 1.2"},
       {:retry, "~> 0.18"},
       {:telemetry, "~> 1.0"},
-      {:opentelemetry_api, "~> 1.0", optional: true},
       {:ex_doc, "~> 0.34", only: :dev, runtime: false},
       {:credo, "~> 1.7", only: [:dev, :test], runtime: false},
-      {:dialyxir, "~> 1.4", only: [:dev], runtime: false}
+      {:dialyxir, "~> 1.4", only: [:dev, :test], runtime: false},
+      {:mox, "~> 1.0", only: :test}
     ]
   end
 

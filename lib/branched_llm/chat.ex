@@ -178,34 +178,35 @@ defmodule BranchedLLM.Chat do
   @spec call_llm(String.t(), Context.t(), list()) ::
           {:ok, StreamResponse.t(), list()} | {:error, term()}
   defp call_llm(model, context, tools) do
-    maybe_with_span("llm_call", %{model: model}, fn ->
-      Logger.info("LLM call_llm starting with context: #{inspect(context)}")
-      start_time = :erlang.monotonic_time(:millisecond)
-
-      %{model_endpoint: model_endpoint} = endpoints()
-
-      result =
-        case ReqLLM.stream_text(model, context.messages, tools: tools, base_url: model_endpoint) do
-          {:ok, stream_response} ->
-            if Enum.empty?(tools) do
-              {:ok, stream_response, []}
-            else
-              handle_stream_for_tools(stream_response)
-            end
-
-          {:error, reason} ->
-            {:error, reason}
-        end
-
-      end_time = :erlang.monotonic_time(:millisecond)
-
-      Logger.info(
-        "LLM call_llm(model: #{model}, tools: #{length(tools)}) took #{end_time - start_time}ms"
-      )
-
-      result
-    end)
+    do_call_llm(model, context, tools)
   end
+
+  defp do_call_llm(model, context, tools) do
+    Logger.info("LLM call_llm starting with context: #{inspect(context)}")
+    start_time = :erlang.monotonic_time(:millisecond)
+
+    %{model_endpoint: model_endpoint} = endpoints()
+
+    result =
+      case ReqLLM.stream_text(model, context.messages, tools: tools, base_url: model_endpoint) do
+        {:ok, stream_response} ->
+          stream_result(stream_response, tools)
+
+        {:error, reason} ->
+          {:error, reason}
+      end
+
+    end_time = :erlang.monotonic_time(:millisecond)
+
+    Logger.info(
+      "LLM call_llm(model: #{model}, tools: #{length(tools)}) took #{end_time - start_time}ms"
+    )
+
+    result
+  end
+
+  defp stream_result(stream_response, []), do: {:ok, stream_response, []}
+  defp stream_result(stream_response, _tools), do: handle_stream_for_tools(stream_response)
 
   # Peeks at the stream to see if the LLM is calling a tool or just talking.
   defp handle_stream_for_tools(%StreamResponse{stream: stream} = stream_response) do
@@ -259,29 +260,34 @@ defmodule BranchedLLM.Chat do
   @spec execute_tool(ReqLLM.Tool.t(), map(), keyword()) :: {:ok, term()} | {:error, term()}
   def execute_tool(tool, args, opts \\ []) do
     cache_module = Keyword.get(opts, :cache, default_tool_cache())
+    do_execute_tool(tool, args, cache_module)
+  end
 
-    maybe_with_span("tool_execution", %{tool: tool.name}, fn ->
-      case cache_module.get_result(tool.name, args) do
-        {:ok, result} ->
-          Logger.info("Tool '#{tool.name}' result retrieved from cache.")
+  defp do_execute_tool(tool, args, cache_module) do
+    case cache_module.get_result(tool.name, args) do
+      {:ok, result} ->
+        Logger.info("Tool '#{tool.name}' result retrieved from cache.")
 
-          :telemetry.execute([:branched_llm, :ai, :tool, :cache, :hit], %{count: 1}, %{
-            tool: tool.name
-          })
+        :telemetry.execute([:branched_llm, :ai, :tool, :cache, :hit], %{count: 1}, %{
+          tool: tool.name
+        })
 
-          {:ok, result}
+        {:ok, result}
 
-        :error ->
-          case ReqLLM.Tool.execute(tool, args) do
-            {:ok, result} = success ->
-              cache_module.save_result(tool.name, args, result)
-              success
+      :error ->
+        execute_and_cache(tool, args, cache_module)
+    end
+  end
 
-            error ->
-              error
-          end
-      end
-    end)
+  defp execute_and_cache(tool, args, cache_module) do
+    case ReqLLM.Tool.execute(tool, args) do
+      {:ok, result} = success ->
+        cache_module.save_result(tool.name, args, result)
+        success
+
+      error ->
+        error
+    end
   end
 
   defp default_tool_cache do
@@ -301,7 +307,6 @@ defmodule BranchedLLM.Chat do
            connect_options: [timeout: 1000],
            retry: false
          )
-         |> maybe_attach_telemetry()
          |> Req.get(url: health_endpoint) do
       {:ok, %{status: 200}} ->
         Logger.info("AI health check successful")
@@ -339,27 +344,5 @@ defmodule BranchedLLM.Chat do
       model_endpoint: base_url <> "/v1",
       health_endpoint: base_url <> "/api/tags"
     }
-  end
-
-  # OpenTelemetry helpers
-
-  defp maybe_with_span(_name, _attrs, fun) do
-    if otel_available?() do
-      apply(:opentelemetry_tracer, :with_span, ["llm_call", %{}, fn _span_ctx -> fun.() end])
-    else
-      fun.()
-    end
-  end
-
-  defp otel_available? do
-    Code.ensure_loaded?(:opentelemetry_tracer)
-  end
-
-  defp maybe_attach_telemetry(req) do
-    if Code.ensure_loaded?(OpentelemetryReq) do
-      apply(OpentelemetryReq, :attach, [req, [no_path_params: true]])
-    else
-      req
-    end
   end
 end

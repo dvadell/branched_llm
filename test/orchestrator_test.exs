@@ -1,230 +1,173 @@
 defmodule BranchedLLM.OrchestratorTest do
   use ExUnit.Case, async: false
   import Mox
-  alias BranchedLLM.Message
-  alias BranchedLLM.Orchestrator
-  alias BranchedLLM.Tree
+  alias BranchedLLM.ChatOrchestrator
   alias ReqLLM.Context
 
   setup :set_mox_from_context
 
-  setup do
-    chat_module = BranchedLLM.ChatMock
-    initial_messages = [Message.new(:system, "System")]
-    initial_context = Context.new([Context.system("System")])
-    tree = Tree.new(chat_module, initial_messages, initial_context)
-    {:ok, tree: tree}
+  defp make_context do
+    Context.new([Context.system("System")])
   end
 
-  test "run/4 sends chunks and done to caller_pid", %{tree: tree} do
-    # Mock LLM streaming
-    tokens = ["Hello", " world"]
+  defp stream_response(tokens) do
+    stream = Stream.map(tokens, &%{text: &1, type: :content})
 
-    expect(BranchedLLM.ChatMock, :send_message_stream, 1, fn _msg, _ctx, _opts ->
-      # Simulate a stream response. tokens/1 expects a stream of maps/structs with text and type.
-      stream = Stream.map(tokens, &%{text: &1, type: :content})
+    %ReqLLM.StreamResponse{
+      stream: stream,
+      context: Context.new([]),
+      model: "gpt-mock",
+      cancel: fn -> :ok end,
+      metadata_task: Task.async(fn -> %{} end)
+    }
+  end
 
-      response = %ReqLLM.StreamResponse{
-        stream: stream,
-        context: Context.new([]),
-        model: "gpt-mock",
-        cancel: fn -> :ok end,
-        metadata_task: Task.async(fn -> %{} end)
+  defp context_builder(content) do
+    Context.new([Context.assistant(content)])
+  end
+
+  describe "run/1 sends chunks and end to caller_pid" do
+    test "basic streaming" do
+      tokens = ["Hello", " world"]
+
+      expect(BranchedLLM.ChatMock, :send_message_stream, 1, fn _msg, _ctx, _opts ->
+        {:ok, stream_response(tokens), &context_builder/1, []}
+      end)
+
+      params = %{
+        message: "Hi",
+        llm_context: make_context(),
+        caller_pid: self(),
+        llm_tools: [],
+        chat_mod: BranchedLLM.ChatMock,
+        tool_usage_counts: %{},
+        branch_id: "main"
       }
 
-      builder = fn content -> Context.new([Context.assistant(content)]) end
+      {:ok, _pid} = ChatOrchestrator.run(params)
 
-      {:ok, response, builder, []}
-    end)
-
-    Orchestrator.run(tree, "main", "Hi", caller_pid: self())
-
-    assert_receive {:llm_chunk, "main", "Hello"}, 500
-    assert_receive {:llm_chunk, "main", " world"}, 500
-    assert_receive {:llm_done, "main", _builder}, 500
+      assert_receive {:llm_chunk, "main", "Hello"}, 500
+      assert_receive {:llm_chunk, "main", " world"}, 500
+      assert_receive {:llm_end, "main", _builder}, 500
+      assert_receive {:update_tool_usage_counts, _}, 500
+    end
   end
 
-  test "run/4 handles errors", %{tree: tree} do
-    # Use stub if retry is involved to avoid unexpected call error
-    stub(BranchedLLM.ChatMock, :send_message_stream, fn _msg, _ctx, _opts ->
-      {:error, "Connection failed"}
-    end)
+  describe "run/1 handles errors" do
+    test "returns error on failure" do
+      stub(BranchedLLM.ChatMock, :send_message_stream, fn _msg, _ctx, _opts ->
+        {:error, "Connection failed"}
+      end)
 
-    Orchestrator.run(tree, "main", "Hi", caller_pid: self())
-
-    assert_receive {:llm_error, "main", "\"Connection failed\""}, 500
-  end
-
-  test "run/4 uses default caller_pid when not provided", %{tree: tree} do
-    stub(BranchedLLM.ChatMock, :send_message_stream, fn _msg, _ctx, _opts ->
-      stream = Stream.map(["test"], &%{text: &1, type: :content})
-
-      response = %ReqLLM.StreamResponse{
-        stream: stream,
-        context: Context.new([]),
-        model: "gpt-mock",
-        cancel: fn -> :ok end,
-        metadata_task: Task.async(fn -> %{} end)
+      params = %{
+        message: "Hi",
+        llm_context: make_context(),
+        caller_pid: self(),
+        llm_tools: [],
+        chat_mod: BranchedLLM.ChatMock,
+        tool_usage_counts: %{},
+        branch_id: "main"
       }
 
-      builder = fn content -> Context.new([Context.assistant(content)]) end
+      {:ok, _pid} = ChatOrchestrator.run(params)
 
-      {:ok, response, builder, []}
-    end)
-
-    # Should not raise, just runs with self() as default
-    Orchestrator.run(tree, "main", "Hi")
-
-    # Wait for the spawned Task to complete before the test exits,
-    # otherwise Mox expectations are cleared before the Task uses them
-    assert_receive {:llm_chunk, "main", "test"}, 500
-    assert_receive {:llm_done, "main", _builder}, 500
+      # Retry with 100ms backoff x 10 = ~1s total, so wait longer
+      assert_receive {:llm_error, "main", _error}, 2000
+    end
   end
 
-  test "run/4 passes llm_tools and tool_usage_counts", %{tree: tree} do
-    call_count = :counters.new(1, [])
+  describe "run/1 passes llm_tools and tool_usage_counts" do
+    test "tools are passed through" do
+      call_count = :counters.new(1, [])
 
-    expect(BranchedLLM.ChatMock, :send_message_stream, 2, fn _msg, _ctx, opts ->
-      :counters.add(call_count, 1, 1)
-
-      # Verify tools are passed through on first call
-      if :counters.get(call_count, 1) == 1 do
+      expect(BranchedLLM.ChatMock, :send_message_stream, 1, fn _msg, _ctx, opts ->
+        :counters.add(call_count, 1, 1)
         assert Keyword.has_key?(opts, :tools)
-      end
+        {:ok, stream_response(["response"]), &context_builder/1, []}
+      end)
 
-      stream = Stream.map(["response"], &%{text: &1, type: :content})
-
-      response = %ReqLLM.StreamResponse{
-        stream: stream,
-        context: Context.new([]),
-        model: "gpt-mock",
-        cancel: fn -> :ok end,
-        metadata_task: Task.async(fn -> %{} end)
+      params = %{
+        message: "Hi",
+        llm_context: make_context(),
+        caller_pid: self(),
+        llm_tools: [%{name: "test_tool"}],
+        chat_mod: BranchedLLM.ChatMock,
+        tool_usage_counts: %{test_tool: 0},
+        branch_id: "main"
       }
 
-      builder = fn content -> Context.new([Context.assistant(content)]) end
+      {:ok, _pid} = ChatOrchestrator.run(params)
 
-      {:ok, response, builder, []}
-    end)
-
-    mock_tool = %{name: "test_tool"}
-
-    Orchestrator.run(tree, "main", "Hi",
-      caller_pid: self(),
-      llm_tools: [mock_tool],
-      tool_usage_counts: %{"test_tool" => 0}
-    )
-
-    assert_receive {:llm_chunk, "main", "response"}, 500
-    assert_receive {:llm_done, "main", _builder}, 500
+      assert_receive {:llm_chunk, "main", "response"}, 500
+      assert_receive {:llm_end, "main", _builder}, 500
+    end
   end
 
-  test "run/4 handles tool calls and recurses", %{tree: tree} do
-    tool_call = ReqLLM.ToolCall.new("call_1", "get_weather", ~s({"location": "NYC"}))
+  describe "run/1 handles tool calls and recurses" do
+    test "executes tool and returns final answer" do
+      tool_call = ReqLLM.ToolCall.new("call_1", "get_weather", ~s({"location": "NYC"}))
 
-    # First call returns tool_calls
-    expect(BranchedLLM.ChatMock, :send_message_stream, 1, fn _msg, _ctx, opts ->
-      assert Keyword.has_key?(opts, :tools)
+      # First call returns tool_calls
+      expect(BranchedLLM.ChatMock, :send_message_stream, 1, fn _msg, _ctx, _opts ->
+        {:ok, stream_response([]), &context_builder/1, [tool_call]}
+      end)
 
-      stream = Stream.map([], &%{text: &1, type: :content})
+      # Mock execute_tool for the tool call
+      expect(BranchedLLM.ChatMock, :execute_tool, 1, fn _tool, _args -> {:ok, "Sunny"} end)
 
-      response = %ReqLLM.StreamResponse{
-        stream: stream,
-        context: Context.new([]),
-        model: "gpt-mock",
-        cancel: fn -> :ok end,
-        metadata_task: Task.async(fn -> %{} end)
+      # Second call (after recursion) returns text
+      expect(BranchedLLM.ChatMock, :send_message_stream, 1, fn _msg, _ctx, _opts ->
+        {:ok, stream_response(["Final answer"]), &context_builder/1, []}
+      end)
+
+      params = %{
+        message: "Weather?",
+        llm_context: make_context(),
+        caller_pid: self(),
+        llm_tools: [%{name: "get_weather"}],
+        chat_mod: BranchedLLM.ChatMock,
+        tool_usage_counts: %{get_weather: 0},
+        branch_id: "main"
       }
 
-      builder = fn content -> Context.new([Context.assistant(content)]) end
+      {:ok, _pid} = ChatOrchestrator.run(params)
 
-      {:ok, response, builder, [tool_call]}
-    end)
-
-    # Mock execute_tool for the tool call
-    expect(BranchedLLM.ChatMock, :execute_tool, 1, fn _tool, _args -> {:ok, "Sunny"} end)
-
-    # Second call (after recursion) returns done
-    expect(BranchedLLM.ChatMock, :send_message_stream, 1, fn _msg, _ctx, _opts ->
-      stream = Stream.map(["Final answer"], &%{text: &1, type: :content})
-
-      response = %ReqLLM.StreamResponse{
-        stream: stream,
-        context: Context.new([]),
-        model: "gpt-mock",
-        cancel: fn -> :ok end,
-        metadata_task: Task.async(fn -> %{} end)
-      }
-
-      builder = fn content -> Context.new([Context.assistant(content)]) end
-
-      {:ok, response, builder, []}
-    end)
-
-    mock_tool = %{name: "get_weather"}
-    Orchestrator.run(tree, "main", "Weather?", caller_pid: self(), llm_tools: [mock_tool])
-
-    assert_receive {:llm_tool_calls, "main", _, _}, 500
-    assert_receive {:llm_status, "main", _}, 500
-    assert_receive {:update_tool_usage_counts, _}, 500
-    assert_receive {:llm_chunk, "main", "Final answer"}, 500
-    assert_receive {:llm_done, "main", _builder}, 500
+      assert_receive {:llm_status, "main", _status}, 500
+      assert_receive {:update_tool_usage_counts, %{get_weather: 1}}, 500
+      assert_receive {:llm_chunk, "main", "Final answer"}, 500
+      assert_receive {:llm_end, "main", _builder}, 500
+    end
   end
 
-  test "run/4 enforces tool usage limits", %{tree: tree} do
-    tool_call = ReqLLM.ToolCall.new("call_1", "limited_tool", ~s({}))
+  describe "run/1 enforces tool usage limits" do
+    test "skips tool execution when limit reached" do
+      tool_call = ReqLLM.ToolCall.new("call_1", "limited_tool", ~s({}))
 
-    # First call returns tool_calls
-    expect(BranchedLLM.ChatMock, :send_message_stream, 1, fn _msg, _ctx, opts ->
-      assert Keyword.has_key?(opts, :tools)
-      stream = Stream.map([], &%{text: &1, type: :content})
+      # First call returns tool_calls
+      expect(BranchedLLM.ChatMock, :send_message_stream, 1, fn _msg, _ctx, _opts ->
+        {:ok, stream_response([]), &context_builder/1, [tool_call]}
+      end)
 
-      response = %ReqLLM.StreamResponse{
-        stream: stream,
-        context: Context.new([]),
-        model: "gpt-mock",
-        cancel: fn -> :ok end,
-        metadata_task: Task.async(fn -> %{} end)
+      # No execute_tool call expected (limit reached), second call returns text
+      expect(BranchedLLM.ChatMock, :send_message_stream, 1, fn _msg, _ctx, _opts ->
+        {:ok, stream_response(["done"]), &context_builder/1, []}
+      end)
+
+      params = %{
+        message: "Use tool",
+        llm_context: make_context(),
+        caller_pid: self(),
+        llm_tools: [%{name: "limited_tool"}],
+        chat_mod: BranchedLLM.ChatMock,
+        tool_usage_counts: %{limited_tool: 10},
+        branch_id: "main"
       }
 
-      builder = fn content -> Context.new([Context.assistant(content)]) end
+      {:ok, _pid} = ChatOrchestrator.run(params)
 
-      {:ok, response, builder, [tool_call]}
-    end)
-
-    # Mock execute_tool
-    expect(BranchedLLM.ChatMock, :execute_tool, 1, fn _tool, _args -> {:ok, "result"} end)
-
-    # After tool execution, the recursive call should return done
-    expect(BranchedLLM.ChatMock, :send_message_stream, 1, fn _msg, _ctx, _opts ->
-      stream = Stream.map(["done"], &%{text: &1, type: :content})
-
-      response = %ReqLLM.StreamResponse{
-        stream: stream,
-        context: Context.new([]),
-        model: "gpt-mock",
-        cancel: fn -> :ok end,
-        metadata_task: Task.async(fn -> %{} end)
-      }
-
-      builder = fn content -> Context.new([Context.assistant(content)]) end
-
-      {:ok, response, builder, []}
-    end)
-
-    # Pass tool_usage_counts with count already at 10 (limit)
-    mock_tool = %{name: "limited_tool"}
-
-    Orchestrator.run(tree, "main", "Use tool",
-      caller_pid: self(),
-      llm_tools: [mock_tool],
-      tool_usage_counts: %{"limited_tool" => 10}
-    )
-
-    assert_receive {:llm_tool_calls, "main", _, _}, 500
-    assert_receive {:llm_status, "main", _}, 500
-    assert_receive {:update_tool_usage_counts, _}, 500
-    assert_receive {:llm_chunk, "main", "done"}, 500
-    assert_receive {:llm_done, "main", _builder}, 500
+      assert_receive {:update_tool_usage_counts, _}, 2000
+      assert_receive {:llm_chunk, "main", "done"}, 500
+      assert_receive {:llm_end, "main", _builder}, 500
+    end
   end
 end

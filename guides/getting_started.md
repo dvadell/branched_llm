@@ -409,4 +409,4 @@ Rate limit errors (429) include retry delay information when the API provides it
 
 - **[Interactive IEx Tutorial](tutorial_iex.md)** — A hands-on walkthrough in the Elixir shell
 - **[API Reference](https://hexdocs.pm/branched_llm)** — Full module documentation
-- **[Source Code](https://github.com/your-org/branched_llm)** — Read the implementation
+- **[Source Code](https://github.com/dvadell/branched_llm)** — Read the implementation
