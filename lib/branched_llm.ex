@@ -1,21 +1,19 @@
 defmodule BranchedLLM do
   @moduledoc """
-  BranchedLLM is a library for building LLM-powered applications with support
-  for branching conversations, tool execution, and streaming responses.
+  A wrapper around [ReqLLM](https://hex.pm/packages/req_llm) that adds
+  branching conversations, tool execution, and async orchestration.
 
   ## Core Concepts
 
     * `BranchedLLM.Message` — A lightweight, immutable message struct for conversations
     * `BranchedLLM.BranchedChat` — A tree-like conversation state with multiple branches
-    * `BranchedLLM.ChatBehaviour` — Behaviour contract for LLM chat implementations
-    * `BranchedLLM.Chat` — A default `ReqLLM`-based chat implementation
+    * `BranchedLLM.Chat` — The ReqLLM-based chat implementation
     * `BranchedLLM.ChatOrchestrator` — Async orchestration of LLM requests with tool calls
 
   ## Getting Started
 
-  1. Implement `BranchedLLM.ChatBehaviour` or use the default `BranchedLLM.Chat`
-  2. Create a `BranchedLLM.BranchedChat` with your initial messages and context
-  3. Use `BranchedLLM.ChatOrchestrator` to run LLM requests asynchronously
+  1. Create a `BranchedLLM.BranchedChat` with initial messages and context
+  2. Use `BranchedLLM.ChatOrchestrator` to run LLM requests asynchronously
 
   ## Configuration
 

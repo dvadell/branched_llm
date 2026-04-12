@@ -4,18 +4,17 @@
 [![HexDocs](https://img.shields.io/badge/hex-docs-blue.svg)](https://hexdocs.pm/branched_llm)
 [![License](https://img.shields.io/hexpm/l/branched_llm.svg)](https://hex.pm/packages/branched_llm)
 
-A powerful Elixir library for building LLM-powered applications with **branching conversations**, **tool execution**, and **streaming responses**.
+A wrapper around [ReqLLM](https://hex.pm/packages/req_llm) that adds **branching conversations**, **tool execution**, and **async orchestration** on top of it.
 
-BranchedLLM powers [Cara](https://github.com/your-org/cara), an educational AI chat platform, and is designed to be dropped into any Phoenix app, CLI tool, or backend service that talks to LLMs.
+BranchedLLM provides the conversation management layer — branching, message queuing, streaming orchestration — while relying on ReqLLM for all LLM API communication. If you need to talk to a different LLM provider than what ReqLLM supports, this library is not the right fit.
 
 ---
 
 ## ✨ Features
 
 - **🌳 Branching conversations** — Fork any conversation at any message to explore alternative responses. Each branch maintains its own context and message history independently.
-- **🔧 Tool calling** — Built-in support for LLM tool use with automatic detection, execution, and result injection. Includes retry limits and result caching.
+- **🔧 Tool calling** — Built-in support for LLM tool use (via ReqLLM) with automatic detection, execution, and result injection. Includes retry limits and result caching.
 - **📡 Streaming responses** — Real-time token streaming via a clean message protocol between the orchestrator and your UI layer.
-- **🔌 Pluggable backends** — Implement `BranchedLLM.ChatBehaviour` to use any LLM provider. Ships with a `ReqLLM`-based default implementation.
 - **🧪 Domain-agnostic** — No knowledge of education, chat apps, or web frameworks. Pure data structures and well-defined message protocols.
 - **📊 Observable** — Optional OpenTelemetry spans and Telemetry events for monitoring.
 
@@ -186,8 +185,8 @@ end
 |---|---|
 | [`BranchedLLM.Message`](https://hexdocs.pm/branched_llm/BranchedLLM.Message.html) | Immutable message struct with role, content, id, and metadata |
 | [`BranchedLLM.BranchedChat`](https://hexdocs.pm/branched_llm/BranchedLLM.BranchedChat.html) | Tree-like conversation state with branching support |
-| [`BranchedLLM.ChatBehaviour`](https://hexdocs.pm/branched_llm/BranchedLLM.ChatBehaviour.html) | Behaviour contract for LLM chat implementations |
-| [`BranchedLLM.Chat`](https://hexdocs.pm/branched_llm/BranchedLLM.Chat.html) | Default `ReqLLM`-based implementation |
+| [`BranchedLLM.ChatBehaviour`](https://hexdocs.pm/branched_llm/BranchedLLM.ChatBehaviour.html) | Behaviour contract (used internally by `BranchedLLM.Chat`) |
+| [`BranchedLLM.Chat`](https://hexdocs.pm/branched_llm/BranchedLLM.Chat.html) | ReqLLM-based chat implementation (the default and only provided backend) |
 | [`BranchedLLM.ChatOrchestrator`](https://hexdocs.pm/branched_llm/BranchedLLM.ChatOrchestrator.html) | Async request orchestration with retry and tool call loops |
 | [`BranchedLLM.ToolHandler`](https://hexdocs.pm/branched_llm/BranchedLLM.ToolHandler.html) | Pure functional tool execution pipeline |
 | [`BranchedLLM.ToolCache`](https://hexdocs.pm/branched_llm/BranchedLLM.ToolCache.html) | Ecto-based tool result caching |
@@ -235,60 +234,13 @@ User Input
 
 ---
 
-## 🛠️ Custom Chat Implementation
+## 💡 Why a Behaviour?
 
-Implement `BranchedLLM.ChatBehaviour` to use any LLM provider:
+`BranchedLLM.ChatBehaviour` exists as a behaviour contract so that `BranchedLLM.Chat` (the included ReqLLM-based implementation) can be tested with mocks in unit tests. It is an internal detail — you will almost certainly just use `BranchedLLM.Chat` directly, which is the only provided implementation.
 
-```elixir
-defmodule MyApp.AnthropicChat do
-  @behaviour BranchedLLM.ChatBehaviour
-
-  @impl true
-  def new_context(system_prompt) do
-    # Build your context structure
-    MyApp.Anthropic.Context.new(system_prompt)
-  end
-
-  @impl true
-  def reset_context(context) do
-    MyApp.Anthropic.Context.reset(context)
-  end
-
-  @impl true
-  def send_message_stream(message, context, opts) do
-    # Return {:ok, stream_response, context_builder, tool_calls}
-    # or {:error, reason}
-    MyApp.Anthropic.API.stream(message, context, opts)
-  end
-
-  @impl true
-  def send_message(message, context, opts) do
-    # Return {:ok, text, new_context} or {:error, reason}
-    MyApp.Anthropic.API.send(message, context, opts)
-  end
-
-  @impl true
-  def execute_tool(tool, args) do
-    # Execute the tool and return {:ok, result} or {:error, reason}
-    tool.execute.(args)
-  end
-
-  @impl true
-  def health_check do
-    # Return :ok or {:error, reason}
-    case MyApp.Anthropic.API.ping() do
-      {:ok, 200} -> :ok
-      _ -> {:error, :unavailable}
-    end
-  end
-end
-```
-
-Then use it:
-
-```elixir
-branched_chat = BranchedChat.new(MyApp.AnthropicChat, messages, context)
-```
+If you need to talk to an LLM provider that ReqLLM doesn't support, you should either:
+1. [Contribute a provider to ReqLLM](https://hex.pm/packages/req_llm), or
+2. Use a different library — BranchedLLM is built on top of ReqLLM and depends on its `ReqLLM.Context`, `ReqLLM.Tool`, `ReqLLM.ToolCall`, and `ReqLLM.StreamResponse` types throughout.
 
 ---
 

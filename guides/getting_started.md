@@ -1,6 +1,8 @@
 # Getting Started
 
-This guide walks you through using BranchedLLM to build LLM-powered applications with branching conversations, tool execution, and streaming responses.
+This guide walks you through using BranchedLLM — a wrapper around [ReqLLM](https://hex.pm/packages/req_llm) — to build LLM-powered applications with branching conversations, tool execution, and streaming responses.
+
+> **Note:** BranchedLLM is built on top of ReqLLM and uses its types (`ReqLLM.Context`, `ReqLLM.Tool`, `ReqLLM.StreamResponse`, etc.) throughout. If you need an LLM provider that ReqLLM doesn't support, consider [contributing to ReqLLM](https://hex.pm/packages/req_llm) first.
 
 ## Prerequisites
 
@@ -327,57 +329,47 @@ end
 
 ---
 
-## Step 6: Custom Chat Behaviour
+## Step 6: Understanding the Architecture
 
-To use a different LLM provider (Anthropic, Google, etc.), implement `BranchedLLM.ChatBehaviour`:
+BranchedLLM is a **wrapper around ReqLLM**, not a generic LLM abstraction layer. The `BranchedLLM.ChatBehaviour` behaviour exists primarily so that `BranchedLLM.Chat` can be mocked in tests. In practice, you will always use `BranchedLLM.Chat` directly.
 
-```elixir
-defmodule MyApp.GoogleChat do
-  @behaviour BranchedLLM.ChatBehaviour
+Here's how the pieces fit together:
 
-  @impl true
-  def new_context(system_prompt) do
-    ReqLLM.Context.new([ReqLLM.Context.system(system_prompt)])
-  end
-
-  @impl true
-  def reset_context(context) do
-    system_msgs = Enum.filter(context.messages, &(&1.role == :system))
-    ReqLLM.Context.new(system_msgs)
-  end
-
-  @impl true
-  def send_message_stream(message, context, opts) do
-    # Call Google API, return ReqLLM.StreamResponse
-    # Adapt the response to ReqLLM's format
-    {:ok, stream_response, context_builder, []}
-  end
-
-  @impl true
-  def send_message(message, context, opts) do
-    {:ok, text, new_context} = send_message_stream(message, context, opts)
-    # Consume stream and return
-    {:ok, text, new_context}
-  end
-
-  @impl true
-  def execute_tool(tool, args) do
-    tool.execute.(args)
-  end
-
-  @impl true
-  def health_check do
-    # Ping the API
-    :ok
-  end
-end
+```
+┌──────────────────────────────────────────┐
+│            Your Application              │
+│   (LiveView, CLI, GenServer, etc.)       │
+├──────────────────────────────────────────┤
+│         BranchedLLM                      │
+│   ┌────────────────────────────┐         │
+│   │   BranchedChat             │  Branch  │
+│   │   + Message queue          │  mgmt    │
+│   └──────────┬─────────────────┘         │
+│              │                           │
+│   ┌──────────▼─────────────────┐         │
+│   │   ChatOrchestrator         │  Async   │
+│   │   + Retry + tool loop      │  orchest │
+│   └──────────┬─────────────────┘         │
+│              │                           │
+│   ┌──────────▼─────────────────┐         │
+│   │   Chat                     │  ReqLLM  │
+│   │   (ReqLLM-based)           │  wrapper │
+│   └──────────┬─────────────────┘         │
+├──────────────┼───────────────────────────┤
+│              │    ReqLLM                  │
+│   ┌──────────▼─────────────────┐         │
+│   │   ReqLLM.stream_text/3     │  HTTP    │
+│   │   ReqLLM.Tool              │  client  │
+│   │   ReqLLM.Context           │          │
+│   └────────────────────────────┘         │
+└──────────────────────────────────────────┘
 ```
 
-Then use it:
-
-```elixir
-branched_chat = BranchedChat.new(MyApp.GoogleChat, messages, context)
-```
+All LLM API communication goes through ReqLLM. BranchedLLM adds:
+- **Branching**: fork conversations at any point
+- **Orchestration**: async tasks, retries, message queuing
+- **Tool loop**: detect → execute → inject → repeat
+- **Streaming protocol**: clean message protocol for your UI
 
 ---
 
