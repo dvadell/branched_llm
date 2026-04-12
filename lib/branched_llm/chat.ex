@@ -260,7 +260,10 @@ defmodule BranchedLLM.Chat do
   @spec execute_tool(ReqLLM.Tool.t(), map(), keyword()) :: {:ok, term()} | {:error, term()}
   def execute_tool(tool, args, opts \\ []) do
     cache_module = Keyword.get(opts, :cache, default_tool_cache())
-    do_execute_tool(tool, args, cache_module)
+
+    maybe_with_span("tool_execution", %{tool: tool.name}, fn ->
+      do_execute_tool(tool, args, cache_module)
+    end)
   end
 
   defp do_execute_tool(tool, args, cache_module) do
@@ -307,6 +310,7 @@ defmodule BranchedLLM.Chat do
            connect_options: [timeout: 1000],
            retry: false
          )
+         |> maybe_attach_telemetry()
          |> Req.get(url: health_endpoint) do
       {:ok, %{status: 200}} ->
         Logger.info("AI health check successful")
@@ -344,5 +348,26 @@ defmodule BranchedLLM.Chat do
       model_endpoint: base_url <> "/v1",
       health_endpoint: base_url <> "/api/tags"
     }
+  end
+
+  # OpenTelemetry helpers
+  # Compile-time branching: when :otel_tracer is loaded, spans are created.
+
+  if Code.ensure_loaded?(OpenTelemetry.Tracer) do
+    require OpenTelemetry.Tracer
+
+    defp maybe_with_span(name, _attrs, fun) do
+      OpenTelemetry.Tracer.with_span name do
+        fun.()
+      end
+    end
+  else
+    defp maybe_with_span(_name, _attrs, fun), do: fun.()
+  end
+
+  if Code.ensure_loaded?(OpentelemetryReq) do
+    defp maybe_attach_telemetry(req), do: OpentelemetryReq.attach(req, no_path_params: true)
+  else
+    defp maybe_attach_telemetry(req), do: req
   end
 end
