@@ -1,8 +1,8 @@
 defmodule BranchedLLM.MixProject do
   use Mix.Project
 
-  @version "0.1.0"
-  @source_url "https://github.com/your-org/branched_llm"
+  @version "0.1.1"
+  @source_url "https://github.com/dvadell/branched_llm"
 
   def project do
     [
@@ -21,7 +21,7 @@ defmodule BranchedLLM.MixProject do
 
   defp test_coverage do
     [
-      summary: [threshold: 60],
+      summary: [threshold: 90],
       ignore_modules: [
         BranchedLLM.Chat,
         BranchedLLM.ToolCache
