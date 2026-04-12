@@ -170,4 +170,83 @@ defmodule BranchedLLM.OrchestratorTest do
       assert_receive {:llm_end, "main", _builder}, 500
     end
   end
+
+  describe "run/1 handles empty stream" do
+    test "retries when stream has no tokens (treated as error)" do
+      # When process_stream returns false (no chunks), it's an error
+      # which triggers retries. After 10 retries, it sends llm_error.
+      stub(BranchedLLM.ChatMock, :send_message_stream, fn _msg, _ctx, _opts ->
+        {:ok, stream_response([]), &context_builder/1, []}
+      end)
+
+      params = %{
+        message: "Hi",
+        llm_context: make_context(),
+        caller_pid: self(),
+        llm_tools: [],
+        chat_mod: BranchedLLM.ChatMock,
+        tool_usage_counts: %{},
+        branch_id: "main"
+      }
+
+      {:ok, _pid} = ChatOrchestrator.run(params)
+
+      # After retries, we get an error
+      assert_receive {:llm_error, "main", _error}, 2000
+    end
+  end
+
+  describe "run/1 tool call limit with all tools at limit" do
+    test "appends tool call results when all tools are at limit" do
+      tool_call = ReqLLM.ToolCall.new("call_1", "full_tool", ~s({}))
+
+      expect(BranchedLLM.ChatMock, :send_message_stream, 1, fn _msg, _ctx, _opts ->
+        {:ok, stream_response([]), &context_builder/1, [tool_call]}
+      end)
+
+      # All tools at limit, no execute_tool call, second call returns text
+      expect(BranchedLLM.ChatMock, :send_message_stream, 1, fn _msg, _ctx, _opts ->
+        {:ok, stream_response(["answer"]), &context_builder/1, []}
+      end)
+
+      params = %{
+        message: "Test",
+        llm_context: make_context(),
+        caller_pid: self(),
+        llm_tools: [%{name: "full_tool"}],
+        chat_mod: BranchedLLM.ChatMock,
+        tool_usage_counts: %{full_tool: 10},
+        branch_id: "main"
+      }
+
+      {:ok, _pid} = ChatOrchestrator.run(params)
+
+      assert_receive {:update_tool_usage_counts, _}, 2000
+      assert_receive {:llm_chunk, "main", "answer"}, 500
+      assert_receive {:llm_end, "main", _builder}, 500
+    end
+  end
+
+  describe "run/1 handles exceptions" do
+    test "formats exception and sends error" do
+      stub(BranchedLLM.ChatMock, :send_message_stream, fn _msg, _ctx, _opts ->
+        raise RuntimeError, "boom"
+      end)
+
+      params = %{
+        message: "Hi",
+        llm_context: make_context(),
+        caller_pid: self(),
+        llm_tools: [],
+        chat_mod: BranchedLLM.ChatMock,
+        tool_usage_counts: %{},
+        branch_id: "main"
+      }
+
+      {:ok, _pid} = ChatOrchestrator.run(params)
+
+      # Retries with exception, then sends error
+      assert_receive {:llm_error, "main", _error}, 2000
+    end
+  end
 end

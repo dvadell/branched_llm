@@ -78,6 +78,16 @@ defmodule BranchedLLM.BranchedChatTest do
       messages = BranchedChat.get_current_messages(chat)
       assert messages == []
     end
+
+    test "appends to existing assistant message" do
+      chat = BranchedChat.new(mock_chat_module(), [], mock_context())
+      chat = BranchedChat.append_chunk(chat, "main", "Hello")
+      chat = BranchedChat.append_chunk(chat, "main", " world")
+
+      messages = BranchedChat.get_current_messages(chat)
+      assert length(messages) == 1
+      assert List.last(messages).content == "Hello world"
+    end
   end
 
   describe "finish_ai_response/3" do
@@ -155,6 +165,26 @@ defmodule BranchedLLM.BranchedChatTest do
 
       deleted_msg = Enum.find(BranchedChat.get_current_messages(chat), &(&1.id == msg_id))
       assert Message.deleted?(deleted_msg)
+    end
+
+    test "rebuilds context excluding deleted messages" do
+      messages = [
+        Message.new(:system, "System"),
+        Message.new(:user, "Keep this"),
+        Message.new(:assistant, "Response"),
+        Message.new(:user, "Delete this")
+      ]
+
+      stub(BranchedLLM.ChatMock, :reset_context, fn ctx -> ctx end)
+
+      chat = BranchedChat.new(mock_chat_module(), messages, mock_context())
+      msg_to_delete = Enum.at(messages, 3).id
+
+      chat = BranchedChat.delete_message(chat, msg_to_delete)
+
+      # The deleted message should be marked deleted
+      deleted = Enum.find(BranchedChat.get_current_messages(chat), &(&1.id == msg_to_delete))
+      assert Message.deleted?(deleted)
     end
   end
 
@@ -262,6 +292,41 @@ defmodule BranchedLLM.BranchedChatTest do
       chat = BranchedChat.new(mock_chat_module(), [], ctx)
 
       assert BranchedChat.get_current_context(chat) == ctx
+    end
+  end
+
+  describe "finish_ai_response/3 with no assistant message" do
+    test "handles empty assistant content" do
+      messages = [Message.new(:system, "System")]
+      chat = BranchedChat.new(mock_chat_module(), messages, mock_context())
+
+      builder = fn text -> Context.new([Context.assistant(text)]) end
+      chat = BranchedChat.finish_ai_response(chat, "main", builder)
+
+      assert chat.branches["main"].active_task == nil
+    end
+  end
+
+  describe "branch_off/2 rebuilds context" do
+    test "calls reset_context and rebuilds with user/assistant messages" do
+      messages = [
+        Message.new(:system, "System"),
+        Message.new(:user, "Question"),
+        Message.new(:assistant, "Answer"),
+        Message.new(:user, "Another question")
+      ]
+
+      stub(BranchedLLM.ChatMock, :reset_context, fn ctx -> ctx end)
+
+      chat = BranchedChat.new(mock_chat_module(), messages, mock_context())
+      # Branch off from the assistant's answer
+      assistant_id = Enum.at(messages, 2).id
+
+      chat = BranchedChat.branch_off(chat, assistant_id)
+
+      # New branch should have system, user, assistant messages
+      branch_messages = BranchedChat.get_current_messages(chat)
+      assert length(branch_messages) == 3
     end
   end
 end
