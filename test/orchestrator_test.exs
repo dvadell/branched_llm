@@ -74,6 +74,11 @@ defmodule BranchedLLM.OrchestratorTest do
 
     # Should not raise, just runs with self() as default
     Orchestrator.run(tree, "main", "Hi")
+
+    # Wait for the spawned Task to complete before the test exits,
+    # otherwise Mox expectations are cleared before the Task uses them
+    assert_receive {:llm_chunk, "main", "test"}, 500
+    assert_receive {:llm_done, "main", _builder}, 500
   end
 
   test "run/4 passes llm_tools and tool_usage_counts", %{tree: tree} do
