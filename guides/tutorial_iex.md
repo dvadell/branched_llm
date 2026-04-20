@@ -804,4 +804,4 @@ end
 
 - **[Getting Started Guide](getting_started.md)** — In-depth feature walkthrough
 - **[API Reference](https://hexdocs.pm/branched_llm)** — Full module documentation
-- **[Source Code](https://github.com/your-org/branched_llm)** — Read the implementation
+- **[Source Code](https://github.com/dvadell/branched_llm)** — Read the implementation
