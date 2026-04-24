@@ -313,3 +313,12 @@ end
 | Chat | `BranchedLLM.Chat` | `send_message/3`, `send_message_stream/3` |
 | Orchestration | `BranchedLLM.ChatOrchestrator` | `run/1` |
 | Errors | `BranchedLLM.LLMErrorFormatter` | `format/1` |
+| Caching | `BranchedLLM.ToolCache` | `get_result/2`, `save_result/3` |
+
+---
+
+## Next Steps
+
+- **[Getting Started Guide](getting_started.md)** — In-depth feature walkthrough
+- **[API Reference](https://hexdocs.pm/branched_llm)** — Full module documentation
+- **[Source Code](https://github.com/dvadell/branched_llm)** — Read the implementation
