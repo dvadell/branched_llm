@@ -27,7 +27,7 @@ Add `branched_llm` to your dependencies:
 ```elixir
 def deps do
   [
-    {:branched_llm, "~> 0.1.0"}
+    {:branched_llm, "~> 0.1.1"}
   ]
 end
 ```
@@ -47,21 +47,17 @@ BranchedLLM requires:
 
 ### Configuration
 
-Configure the LLM connection:
+Configure the LLM connection in `config/config.exs`:
 
 ```elixir
 config :branched_llm,
   ai_model: "openai:gpt-4o",
   base_url: "http://localhost:11434"
-```
 
-Or configure through `:req_llm` (which BranchedLLM falls back to):
-
-```elixir
+# ReqLLM configuration (OpenAI-compatible)
 config :req_llm,
   openai: [
-    base_url: "http://localhost:11434/api",
-    api_key: "your-api-key"
+    api_key: System.get_env("OPENAI_API_KEY")
   ]
 ```
 
@@ -70,21 +66,6 @@ For tool result caching, configure the Ecto repo:
 ```elixir
 config :branched_llm, BranchedLLM.ToolCache,
   repo: MyApp.Repo
-```
-
-You'll also need a `tool_results` table. Generate a migration:
-
-```elixir
-def change do
-  create table(:tool_results) do
-    add :tool_name, :string, null: false
-    add :args, :map, null: false
-    add :result, :text, null: false
-    timestamps()
-  end
-
-  create index(:tool_results, [:tool_name, :args])
-end
 ```
 
 ---
@@ -112,19 +93,23 @@ IO.puts(response)
 calculator_tool = ReqLLM.Tool.new(
   name: "calculator",
   description: "Evaluates a mathematical expression",
-  parameters: %{expression: "string"},
+  parameters: %{
+    type: "object",
+    properties: %{expression: %{type: "string"}}
+  },
   execute: fn %{"expression" => expr} ->
     {result, _} = Code.eval_string(expr)
     {:ok, to_string(result)}
   end
 )
 
-{:ok, stream, context_builder, tool_calls} =
+{:ok, stream_response, context_builder, tool_calls} =
   Chat.send_message_stream("What is 123 * 456?", context, tools: [calculator_tool])
 
-# Consume the stream (in a real app, send chunks to your UI)
-final_text = Enum.join(stream)
-new_context = context_builder.(final_text)
+# Consume the stream
+stream_response
+|> ReqLLM.StreamResponse.tokens()
+|> Enum.each(fn chunk -> IO.write(chunk.text) end)
 ```
 
 ### 4. Branching conversations
@@ -133,46 +118,18 @@ new_context = context_builder.(final_text)
 alias BranchedLLM.{BranchedChat, Message}
 
 # Start with an initial conversation
-messages = [Message.new(:system, "You are helpful."),
-            Message.new(:user, "What is 2+2?"),
-            Message.new(:assistant, "2+2 equals 4.")]
-
+messages = [Message.new(:system, "You are helpful.")]
 branched_chat = BranchedChat.new(Chat, messages, context)
 
-# Branch off from the user's question to explore alternatives
-branched_chat = BranchedChat.branch_off(branched_chat, messages |> Enum.at(1) |> Map.get(:id))
+# Add a message
+branched_chat = BranchedChat.add_user_message(branched_chat, "What is 2+2?")
+last_msg = List.last(BranchedChat.get_current_messages(branched_chat))
 
-# Now the active branch has a different trajectory
-branched_chat = BranchedChat.add_user_message(branched_chat, "What is 2*2?")
+# Branch off from this message to explore alternatives
+branched_chat = BranchedChat.branch_off(branched_chat, last_msg.id)
 
 # Switch back to the main branch
 branched_chat = BranchedChat.switch_branch(branched_chat, "main")
-```
-
-### 5. Async orchestration (for LiveView / GenServer)
-
-```elixir
-alias BranchedLLM.ChatOrchestrator
-
-params = %{
-  message: "Tell me about Elixir",
-  llm_context: context,
-  caller_pid: self(),
-  llm_tools: [],
-  chat_mod: Chat,
-  tool_usage_counts: %{},
-  branch_id: "main"
-}
-
-{:ok, _task_pid} = ChatOrchestrator.run(params)
-
-# Receive messages in your process:
-receive do
-  {:llm_chunk, "main", chunk} -> IO.write(chunk)
-  {:llm_end, "main", context_builder} -> IO.puts("\nDone!")
-  {:llm_status, "main", status} -> IO.puts(status)
-  {:llm_error, "main", error} -> IO.puts(error)
-end
 ```
 
 ---
@@ -183,21 +140,20 @@ end
 
 | Module | Responsibility |
 |---|---|
-| [`BranchedLLM.Message`](https://hexdocs.pm/branched_llm/BranchedLLM.Message.html) | Immutable message struct with role, content, id, and metadata |
-| [`BranchedLLM.BranchedChat`](https://hexdocs.pm/branched_llm/BranchedLLM.BranchedChat.html) | Tree-like conversation state with branching support |
-| [`BranchedLLM.ChatBehaviour`](https://hexdocs.pm/branched_llm/BranchedLLM.ChatBehaviour.html) | Behaviour contract (used internally by `BranchedLLM.Chat`) |
-| [`BranchedLLM.Chat`](https://hexdocs.pm/branched_llm/BranchedLLM.Chat.html) | ReqLLM-based chat implementation (the default and only provided backend) |
-| [`BranchedLLM.ChatOrchestrator`](https://hexdocs.pm/branched_llm/BranchedLLM.ChatOrchestrator.html) | Async request orchestration with retry and tool call loops |
-| [`BranchedLLM.ToolHandler`](https://hexdocs.pm/branched_llm/BranchedLLM.ToolHandler.html) | Pure functional tool execution pipeline |
-| [`BranchedLLM.ToolCache`](https://hexdocs.pm/branched_llm/BranchedLLM.ToolCache.html) | Ecto-based tool result caching |
-| [`BranchedLLM.LLM.StreamParser`](https://hexdocs.pm/branched_llm/BranchedLLM.LLM.StreamParser.html) | Stream intent detection and tool call extraction |
-| [`BranchedLLM.LLMErrorFormatter`](https://hexdocs.pm/branched_llm/BranchedLLM.LLMErrorFormatter.html) | User-friendly error message formatting |
+| `BranchedLLM.Message` | Immutable message struct with role, content, id, and metadata |
+| `BranchedLLM.BranchedChat` | Tree-like conversation state with branching support |
+| `BranchedLLM.Chat` | ReqLLM-based chat implementation |
+| `BranchedLLM.ChatOrchestrator` | Async request orchestration with retry and tool call loops |
+| `BranchedLLM.ToolHandler` | Orchestrates tool execution and context injection |
+| `BranchedLLM.ToolCache` | Ecto-based tool result caching |
+| `BranchedLLM.LLM.StreamParser` | Stream intent detection and tool call extraction |
+| `BranchedLLM.LLMErrorFormatter` | User-friendly error message formatting |
 
 ### Message Protocol
 
-The `ChatOrchestrator` communicates with the caller via process messages:
+The `ChatOrchestrator` communicates with the caller via a callback function (`on_event`):
 
-```
+```elixir
 {:llm_chunk, branch_id, chunk}        # Streaming text chunk
 {:llm_end, branch_id, context_builder} # Stream complete
 {:llm_status, branch_id, status}       # Status update ("Thinking...", "Using calculator...")
@@ -205,64 +161,8 @@ The `ChatOrchestrator` communicates with the caller via process messages:
 {:update_tool_usage_counts, counts}    # Updated tool usage tracking
 ```
 
-### Data Flow
+This allows you to easily pipe events to processes (`send/2`), write directly to STDOUT, or integrate with any other side-effect.
 
-```
-User Input
-    │
-    ▼
-┌──────────────┐
-│ BranchedChat │  ← Manages branch state, message queue, active tasks
-└──────┬───────┘
-       │
-       ▼
-┌───────────────────┐
-│ ChatOrchestrator  │  ← Starts async Task, handles retry, tool call loop
-└──────┬────────────┘
-       │
-       ▼
-┌──────────────┐     ┌─────────────┐     ┌──────────────┐
-│   Chat       │────▶│ StreamParser│────▶│ ToolHandler  │
-│ (ReqLLM)     │     │ (intents)   │     │ (execution)  │
-└──────────────┘     └─────────────┘     └──────┬───────┘
-                                                │
-                                                ▼
-                                         ┌──────────────┐
-                                         │  ToolCache   │  ← DB-backed cache
-                                         └──────────────┘
-```
-
----
-
-## 💡 Why a Behaviour?
-
-`BranchedLLM.ChatBehaviour` exists as a behaviour contract so that `BranchedLLM.Chat` (the included ReqLLM-based implementation) can be tested with mocks in unit tests. It is an internal detail — you will almost certainly just use `BranchedLLM.Chat` directly, which is the only provided implementation.
-
-If you need to talk to an LLM provider that ReqLLM doesn't support, you should either:
-1. [Contribute a provider to ReqLLM](https://hex.pm/packages/req_llm), or
-2. Use a different library — BranchedLLM is built on top of ReqLLM and depends on its `ReqLLM.Context`, `ReqLLM.Tool`, `ReqLLM.ToolCall`, and `ReqLLM.StreamResponse` types throughout.
-
----
-
-## 📊 Telemetry Events
-
-| Event | Measure | Metadata |
-|---|---|---|
-| `[:branched_llm, :ai, :tool, :cache, :hit]` | `:count` (1) | `:tool` (tool name) |
-| `[:branched_llm, :ai, :tool, :cache, :miss]` | `:count` (1) | `:tool` (tool name) |
-
-Attach handlers:
-
-```elixir
-:telemetry.attach(
-  "tool-cache-hit",
-  [:branched_llm, :ai, :tool, :cache, :hit],
-  fn event, measurements, metadata, config ->
-    IO.inspect({event, measurements, metadata})
-  end,
-  []
-)
-```
 
 ---
 
@@ -270,9 +170,10 @@ Attach handlers:
 
 - **[Getting Started](guides/getting_started.md)** — Step-by-step tutorial for first-time users
 - **[Interactive IEx Tutorial](guides/tutorial_iex.md)** — Hands-on walkthrough in the Elixir shell
+- **[Comparison with ReqLLM](guides/comparison_req_llm.md)** — Why use BranchedLLM over raw ReqLLM?
 
 ---
 
 ## 📄 License
 
-MIT License. See [LICENSE](https://github.com/your-org/branched_llm/blob/main/LICENSE) for details.
+MIT License. See [LICENSE](https://github.com/dvadell/branched_llm/blob/main/LICENSE) for details.

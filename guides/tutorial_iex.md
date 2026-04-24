@@ -189,32 +189,9 @@ calculator = ReqLLM.Tool.new(
 
 The `ChatOrchestrator` runs the LLM request in a separate `Task`. In IEx, we can use a helper function to "listen" for the streaming chunks.
 
-### Setup a Listener
-
-Define this helper in your IEx session to handle the async protocol:
-
-```elixir
-listen = fn listen ->
-  receive do
-    {:llm_chunk, _id, chunk} -> 
-      IO.write(if is_map(chunk), do: chunk.text, else: chunk)
-      listen.(listen)
-    {:llm_status, _id, status} -> 
-      IO.puts("\n[Status: #{status}]")
-      listen.(listen)
-    {:llm_end, _id, _builder} -> 
-      IO.puts("\n[Stream Complete]")
-    {:llm_error, _id, err} -> 
-      IO.puts("\n[Error: #{err}]")
-    {:update_tool_usage_counts, _counts} ->
-      listen.(listen)
-  after
-    10000 -> IO.puts("\n[Timed out waiting for AI]")
-  end
-end
-```
-
 ### Run a Real Request
+
+The `on_event` function can be used to handle streaming updates directly. In this example, we'll write to STDOUT:
 
 ```elixir
 alias BranchedLLM.{Chat, ChatOrchestrator}
@@ -224,7 +201,13 @@ context = Chat.new_context("You are a helpful assistant.")
 params = %{
   message: "What is 123 * 456?",
   llm_context: context,
-  caller_pid: self(),
+  on_event: fn
+    {:llm_chunk, _id, chunk} -> IO.write(if is_map(chunk), do: chunk.text, else: chunk)
+    {:llm_status, _id, status} -> IO.puts("\n[Status: #{status}]")
+    {:llm_end, _id, _builder} -> IO.puts("\n[Stream Complete]")
+    {:llm_error, _id, err} -> IO.puts("\n[Error: #{err}]")
+    {:update_tool_usage_counts, _counts} -> :ok
+  end,
   llm_tools: [calculator],
   chat_mod: Chat,
   tool_usage_counts: %{},
@@ -233,10 +216,10 @@ params = %{
 
 # Start the async orchestrator
 {:ok, _task_pid} = ChatOrchestrator.run(params)
-
-# Run the listener to see the output in real-time
-listen.(listen)
 ```
+
+You will see the output appearing in your IEx session as the AI responds!
+
 
 ---
 

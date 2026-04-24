@@ -264,10 +264,13 @@ For web interfaces, you don't want to block the UI while waiting for the LLM. `C
 ```elixir
 alias BranchedLLM.ChatOrchestrator
 
+caller_pid = self()
 params = %{
   message: "What is Elixir?",
   llm_context: context,
-  caller_pid: self(),
+  # on_event is a function that receives orchestrator events.
+  # Typically, it sends them back to the caller pid:
+  on_event: fn event -> send(caller_pid, event) end,
   llm_tools: [calculator_tool],
   chat_mod: Chat,
   tool_usage_counts: %{"calculator" => 0},

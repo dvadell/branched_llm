@@ -64,6 +64,18 @@ You might prefer to use `ReqLLM` without the `BranchedLLM` wrapper if:
 *   You have a **stateless API** where you receive the full history from the client every time and just return a single string.
 *   You want **total control** over the HTTP request and don't want any abstraction between you and the LLM endpoint.
 
+## Module Comparison
+
+| ReqLLM Primitive | BranchedLLM Module | Role of BranchedLLM |
+| :--- | :--- | :--- |
+| `ReqLLM.Context` | `BranchedLLM.Message` | Adds immutable IDs and structured metadata to individual messages. |
+| `ReqLLM.Context` | `BranchedLLM.BranchedChat` | Wraps the list of messages into a tree structure with branch IDs and parent links. |
+| `ReqLLM.stream_text/3` | `BranchedLLM.Chat` | Wraps the API call to provide behavior implementation and defaults. |
+| `ReqLLM.StreamResponse`| `BranchedLLM.ChatOrchestrator`| Manages the lifecycle of the stream response, handling tools and retries. |
+| `ReqLLM.Tool.execute/2` | `BranchedLLM.ToolHandler` | Orchestrates the execution of *multiple* tool calls and context injection. |
+| N/A | `BranchedLLM.ToolCache` | Adds an Ecto-backed persistence layer for tool results (missing in ReqLLM). |
+| N/A | `BranchedLLM.LLMErrorFormatter`| Translates raw HTTP/API errors into user-friendly strings. |
+
 ## Conclusion
 
 `BranchedLLM` isn't just a wrapper; it's a **state engine**. It takes the excellent foundations of `ReqLLM` and adds the machinery needed to build "Chat-GPT-like" interfaces where branching, background orchestration, and resilient error handling are required.

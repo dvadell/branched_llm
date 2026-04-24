@@ -35,7 +35,10 @@ defmodule BranchedLLMTest do
          }, fn t -> Context.new([Context.assistant(t)]) end, []}
       end)
 
-      {:ok, _pid} = BranchedLLM.send_message(chat, "Hello", self(), [], %{})
+      test_pid = self()
+
+      {:ok, _pid} =
+        BranchedLLM.send_message(chat, "Hello", fn event -> send(test_pid, event) end, [], %{})
 
       assert_receive {:llm_chunk, "main", "Hi"}, 500
       assert_receive {:llm_end, "main", _builder}, 500

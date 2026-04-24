@@ -7,7 +7,8 @@ defmodule BranchedLLM.ChatOrchestrator do
 
   ## Message Protocol
 
-  The orchestrator sends the following messages to `caller_pid`:
+  The orchestrator sends the following messages through the `on_event` function, typically
+  to the caller pid:
 
     * `{:llm_chunk, branch_id, chunk}` — A streaming text chunk from the LLM
     * `{:llm_end, branch_id, context_builder}` — The stream is complete; `context_builder` is a
@@ -21,10 +22,11 @@ defmodule BranchedLLM.ChatOrchestrator do
 
   ## Example
 
+      caller_pid = self()
       params = %{
         message: "What is 2+2?",
         llm_context: context,
-        caller_pid: self(),
+        on_event: fn event -> send(caller_pid, event) end,
         llm_tools: [calculator_tool],
         chat_mod: BranchedLLM.Chat,
         tool_usage_counts: %{},
@@ -44,7 +46,7 @@ defmodule BranchedLLM.ChatOrchestrator do
   @type llm_call_params :: %{
           message: String.t(),
           llm_context: ReqLLM.Context.t(),
-          caller_pid: pid(),
+          on_event: fun(),
           llm_tools: list(),
           chat_mod: module(),
           tool_usage_counts: map(),
@@ -66,7 +68,7 @@ defmodule BranchedLLM.ChatOrchestrator do
               :ok
 
             {:error, reason} ->
-              send(params.caller_pid, {:llm_status, params.branch_id, "Retrying..."})
+              params.on_event.({:llm_status, params.branch_id, "Retrying..."})
               {:error, reason}
           end
         after
@@ -80,7 +82,7 @@ defmodule BranchedLLM.ChatOrchestrator do
           :ok
 
         {:error, reason} ->
-          send(params.caller_pid, {:llm_error, params.branch_id, reason})
+          params.on_event.({:llm_error, params.branch_id, reason})
       end
     end)
   end
@@ -90,7 +92,7 @@ defmodule BranchedLLM.ChatOrchestrator do
          %{
            message: message,
            llm_context: llm_context,
-           caller_pid: _caller_pid,
+           on_event: _event_fn,
            llm_tools: llm_tools,
            chat_mod: chat_mod
          } = llm_call_params
@@ -123,7 +125,7 @@ defmodule BranchedLLM.ChatOrchestrator do
          llm_context_builder,
          tool_calls,
          %{
-           caller_pid: caller_pid,
+           on_event: on_event_fn,
            tool_usage_counts: tool_usage_counts,
            branch_id: branch_id
          } = llm_call_params
@@ -132,7 +134,7 @@ defmodule BranchedLLM.ChatOrchestrator do
       # No tool calls, process the stream normally
       if process_stream(
            stream_response,
-           caller_pid,
+           on_event_fn,
            llm_context_builder,
            tool_usage_counts,
            branch_id
@@ -157,12 +159,12 @@ defmodule BranchedLLM.ChatOrchestrator do
            llm_tools: llm_tools,
            chat_mod: chat_mod,
            tool_usage_counts: tool_usage_counts,
-           caller_pid: caller_pid,
+           on_event: on_event_fn,
            branch_id: branch_id
          } = llm_call_params
        ) do
     tool_names = Enum.map_join(tool_calls, ", ", &ReqLLM.ToolCall.name/1)
-    send(caller_pid, {:llm_status, branch_id, "Using #{tool_names}..."})
+    on_event_fn.({:llm_status, branch_id, "Using #{tool_names}..."})
 
     {tool_calls_to_execute, tool_results_for_limited_tools, new_tool_usage_counts} =
       Enum.reduce(tool_calls, {[], [], tool_usage_counts}, fn tool_call,
@@ -216,19 +218,19 @@ defmodule BranchedLLM.ChatOrchestrator do
 
   @spec process_stream(
           ReqLLM.StreamResponse.t(),
-          pid(),
+          any(),
           (String.t() -> ReqLLM.Context.t()),
           map(),
           String.t()
         ) :: boolean()
   defp process_stream(
          stream_response,
-         caller_pid,
+         on_event_fn,
          llm_context_builder,
          tool_usage_counts,
          branch_id
        ) do
-    send(caller_pid, {:update_tool_usage_counts, tool_usage_counts})
+    on_event_fn.({:update_tool_usage_counts, tool_usage_counts})
 
     start_time = :erlang.monotonic_time(:millisecond)
 
@@ -236,7 +238,7 @@ defmodule BranchedLLM.ChatOrchestrator do
       stream_response
       |> ReqLLM.StreamResponse.tokens()
       |> Enum.reduce_while(false, fn chunk, _acc ->
-        send(caller_pid, {:llm_chunk, branch_id, chunk})
+        on_event_fn.({:llm_chunk, branch_id, chunk})
         {:cont, true}
       end)
 
@@ -247,7 +249,7 @@ defmodule BranchedLLM.ChatOrchestrator do
     Logger.info("LLM stream complete metadata: #{inspect(metadata)}")
 
     if sent_any_chunks do
-      send(caller_pid, {:llm_end, branch_id, llm_context_builder})
+      on_event_fn.({:llm_end, branch_id, llm_context_builder})
     end
 
     sent_any_chunks

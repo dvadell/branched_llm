@@ -26,7 +26,7 @@ defmodule BranchedLLM.OrchestratorTest do
     Context.new([Context.assistant(content)])
   end
 
-  describe "run/1 sends chunks and end to caller_pid" do
+  describe "run/1 sends chunks and end through on_event" do
     test "basic streaming" do
       tokens = ["Hello", " world"]
 
@@ -34,10 +34,12 @@ defmodule BranchedLLM.OrchestratorTest do
         {:ok, stream_response(tokens), &context_builder/1, []}
       end)
 
+      pid = self()
+
       params = %{
         message: "Hi",
         llm_context: make_context(),
-        caller_pid: self(),
+        on_event: fn event -> send(pid, event) end,
         llm_tools: [],
         chat_mod: BranchedLLM.ChatMock,
         tool_usage_counts: %{},
@@ -59,10 +61,12 @@ defmodule BranchedLLM.OrchestratorTest do
         {:error, "Connection failed"}
       end)
 
+      pid = self()
+
       params = %{
         message: "Hi",
         llm_context: make_context(),
-        caller_pid: self(),
+        on_event: fn event -> send(pid, event) end,
         llm_tools: [],
         chat_mod: BranchedLLM.ChatMock,
         tool_usage_counts: %{},
@@ -86,10 +90,12 @@ defmodule BranchedLLM.OrchestratorTest do
         {:ok, stream_response(["response"]), &context_builder/1, []}
       end)
 
+      pid = self()
+
       params = %{
         message: "Hi",
         llm_context: make_context(),
-        caller_pid: self(),
+        on_event: fn event -> send(pid, event) end,
         llm_tools: [%{name: "test_tool"}],
         chat_mod: BranchedLLM.ChatMock,
         tool_usage_counts: %{test_tool: 0},
@@ -120,10 +126,12 @@ defmodule BranchedLLM.OrchestratorTest do
         {:ok, stream_response(["Final answer"]), &context_builder/1, []}
       end)
 
+      pid = self()
+
       params = %{
         message: "Weather?",
         llm_context: make_context(),
-        caller_pid: self(),
+        on_event: fn event -> send(pid, event) end,
         llm_tools: [%{name: "get_weather"}],
         chat_mod: BranchedLLM.ChatMock,
         tool_usage_counts: %{get_weather: 0},
@@ -153,10 +161,12 @@ defmodule BranchedLLM.OrchestratorTest do
         {:ok, stream_response(["done"]), &context_builder/1, []}
       end)
 
+      pid = self()
+
       params = %{
         message: "Use tool",
         llm_context: make_context(),
-        caller_pid: self(),
+        on_event: fn event -> send(pid, event) end,
         llm_tools: [%{name: "limited_tool"}],
         chat_mod: BranchedLLM.ChatMock,
         tool_usage_counts: %{limited_tool: 10},
@@ -179,10 +189,12 @@ defmodule BranchedLLM.OrchestratorTest do
         {:ok, stream_response([]), &context_builder/1, []}
       end)
 
+      pid = self()
+
       params = %{
         message: "Hi",
         llm_context: make_context(),
-        caller_pid: self(),
+        on_event: fn event -> send(pid, event) end,
         llm_tools: [],
         chat_mod: BranchedLLM.ChatMock,
         tool_usage_counts: %{},
@@ -209,10 +221,12 @@ defmodule BranchedLLM.OrchestratorTest do
         {:ok, stream_response(["answer"]), &context_builder/1, []}
       end)
 
+      pid = self()
+
       params = %{
         message: "Test",
         llm_context: make_context(),
-        caller_pid: self(),
+        on_event: fn event -> send(pid, event) end,
         llm_tools: [%{name: "full_tool"}],
         chat_mod: BranchedLLM.ChatMock,
         tool_usage_counts: %{full_tool: 10},
@@ -233,10 +247,12 @@ defmodule BranchedLLM.OrchestratorTest do
         raise RuntimeError, "boom"
       end)
 
+      pid = self()
+
       params = %{
         message: "Hi",
         llm_context: make_context(),
-        caller_pid: self(),
+        on_event: fn event -> send(pid, event) end,
         llm_tools: [],
         chat_mod: BranchedLLM.ChatMock,
         tool_usage_counts: %{},

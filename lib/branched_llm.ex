@@ -42,18 +42,18 @@ defmodule BranchedLLM do
 
   This is a convenience wrapper around `ChatOrchestrator.run/1`.
   """
-  @spec send_message(BranchedChat.t(), String.t(), pid(), list(), map()) :: {:ok, pid()}
+  @spec send_message(BranchedChat.t(), String.t(), fun(), list(), map()) :: {:ok, pid()}
   def send_message(
         %BranchedChat{} = branched_chat,
         message,
-        caller_pid,
+        on_event,
         llm_tools,
         tool_usage_counts
       ) do
     params = %{
       message: message,
       llm_context: BranchedChat.get_current_context(branched_chat),
-      caller_pid: caller_pid,
+      on_event: on_event,
       llm_tools: llm_tools,
       chat_mod: branched_chat.chat_module,
       tool_usage_counts: tool_usage_counts,
