@@ -47,7 +47,7 @@ defmodule BranchedLLM.Message do
       role: role,
       sender: role,
       content: content,
-      id: id || Ecto.UUID.generate(),
+      id: id || BranchedLLM.UUID.generate(),
       metadata: metadata
     }
   end

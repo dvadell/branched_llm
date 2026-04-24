@@ -10,17 +10,17 @@ BranchedLLM provides the conversation management layer — branching, message qu
 
 ---
 
-## ✨ Features
+## Features
 
-- **🌳 Branching conversations** — Fork any conversation at any message to explore alternative responses. Each branch maintains its own context and message history independently.
-- **🔧 Tool calling** — Built-in support for LLM tool use (via ReqLLM) with automatic detection, execution, and result injection. Includes retry limits and result caching.
-- **📡 Streaming responses** — Real-time token streaming via a clean message protocol between the orchestrator and your UI layer.
-- **🧪 Domain-agnostic** — No knowledge of education, chat apps, or web frameworks. Pure data structures and well-defined message protocols.
-- **📊 Observable** — Optional OpenTelemetry spans and Telemetry events for monitoring.
+- ** Branching conversations** — Fork any conversation at any message to explore alternative responses. Each branch maintains its own context and message history independently.
+- ** Tool calling** — Built-in support for LLM tool use (via ReqLLM) with automatic detection, execution, and result injection. Includes retry limits and result caching.
+- ** Streaming responses** — Real-time token streaming via a clean message protocol between the orchestrator and your UI layer.
+- ** Domain-agnostic** — No knowledge of education, chat apps, or web frameworks. Pure data structures and well-defined message protocols.
+- ** Observable** — Optional OpenTelemetry spans and Telemetry events for monitoring.
 
 ---
 
-## 📦 Installation
+## Installation
 
 Add `branched_llm` to your dependencies:
 
@@ -39,7 +39,7 @@ BranchedLLM requires:
 | Dependency | Purpose | Required |
 |---|---|---|
 | [`req_llm`](https://hex.pm/packages/req_llm) | LLM API communication | Yes |
-| [`ecto`](https://hex.pm/packages/ecto) | Tool result caching | Yes (runtime) |
+| [`ecto`](https://hex.pm/packages/ecto) | Tool result caching | Optional |
 | [`jason`](https://hex.pm/packages/jason) | JSON encoding | Yes |
 | [`retry`](https://hex.pm/packages/retry) | Automatic retry on failures | Yes |
 | [`telemetry`](https://hex.pm/packages/telemetry) | Metrics events | Yes |
@@ -61,16 +61,21 @@ config :req_llm,
   ]
 ```
 
-For tool result caching, configure the Ecto repo:
+For tool result caching, the library defaults to `BranchedLLM.ToolCache.InMemory` (no-op). To use Ecto:
 
 ```elixir
+# mix.exs
+{:ecto, "~> 3.13"}
+
+# config/config.exs
+config :branched_llm, :tool_cache, BranchedLLM.ToolCache.Ecto
 config :branched_llm, BranchedLLM.ToolCache,
   repo: MyApp.Repo
 ```
 
 ---
 
-## 🚀 Quick Start
+## Quick Start
 
 ### 1. Create a conversation context
 
@@ -98,6 +103,8 @@ calculator_tool = ReqLLM.Tool.new(
     properties: %{expression: %{type: "string"}}
   },
   execute: fn %{"expression" => expr} ->
+    # SECURITY WARNING: Using Code.eval_string on LLM output is dangerous.
+    # In a production app, use a safe math library or a restricted parser.
     {result, _} = Code.eval_string(expr)
     {:ok, to_string(result)}
   end
@@ -134,7 +141,7 @@ branched_chat = BranchedChat.switch_branch(branched_chat, "main")
 
 ---
 
-## 📖 Architecture
+## Architecture
 
 ### Core Modules
 
@@ -166,7 +173,7 @@ This allows you to easily pipe events to processes (`send/2`), write directly to
 
 ---
 
-## 📚 Guides
+## Guides
 
 - **[Getting Started](guides/getting_started.md)** — Step-by-step tutorial for first-time users
 - **[Interactive IEx Tutorial](guides/tutorial_iex.md)** — Hands-on walkthrough in the Elixir shell

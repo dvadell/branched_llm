@@ -204,7 +204,7 @@ defmodule BranchedLLM.BranchedChat do
       new_messages = Enum.slice(messages, 0..idx)
       new_llm_context = rebuild_context_from_messages(new_messages, t)
 
-      new_branch_id = Ecto.UUID.generate()
+      new_branch_id = BranchedLLM.UUID.generate()
 
       new_branch = %{
         name: "",

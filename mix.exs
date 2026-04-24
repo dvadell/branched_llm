@@ -38,7 +38,7 @@ defmodule BranchedLLM.MixProject do
   defp deps do
     [
       {:req_llm, "~> 1.0.0"},
-      {:ecto, "~> 3.13"},
+      {:ecto, "~> 3.13", optional: true},
       {:jason, "~> 1.2"},
       {:retry, "~> 0.18"},
       {:telemetry, "~> 1.0"},

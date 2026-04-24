@@ -42,22 +42,50 @@ defmodule BranchedLLM.Chat do
   ## Options
 
     * `:model` - The model to use (defaults to the model specified in the application config).
+    * `:tools` - A list of `ReqLLM.Tool` structs to provide to the LLM.
   """
   @impl true
   @spec send_message(String.t(), Context.t(), keyword()) ::
           {:ok, String.t(), Context.t()} | {:error, term()}
   def send_message(message, context, opts \\ []) do
     config = build_config(opts)
-    updated_context = add_user_message(context, message)
+    parent = self()
+    ref = make_ref()
 
-    case call_llm(config.model, updated_context, config.tools) do
-      {:ok, stream_response, _tool_calls} ->
-        final_text = StreamParser.consume_to_text(stream_response.stream)
-        final_context = add_assistant_message(updated_context, final_text)
-        {:ok, final_text, final_context}
+    on_event = fn
+      {:llm_chunk, _id, chunk} -> send(parent, {ref, :chunk, chunk})
+      {:llm_end, _id, builder} -> send(parent, {ref, :end, builder})
+      {:llm_error, _id, err} -> send(parent, {ref, :error, err})
+      _ -> :ok
+    end
 
-      {:error, reason} ->
-        {:error, reason}
+    params = %{
+      message: message,
+      llm_context: context,
+      on_event: on_event,
+      llm_tools: config.tools,
+      chat_mod: __MODULE__,
+      tool_usage_counts: %{},
+      branch_id: "sync-call"
+    }
+
+    {:ok, _pid} = BranchedLLM.ChatOrchestrator.run(params)
+    wait_for_sync_result(ref, "")
+  end
+
+  defp wait_for_sync_result(ref, acc) do
+    receive do
+      {^ref, :chunk, chunk} ->
+        text = if is_map(chunk), do: Map.get(chunk, :text, ""), else: to_string(chunk)
+        wait_for_sync_result(ref, acc <> text)
+
+      {^ref, :end, builder} ->
+        {:ok, acc, builder.(acc)}
+
+      {^ref, :error, err} ->
+        {:error, err}
+    after
+      60_000 -> {:error, "Timed out waiting for LLM response"}
     end
   end
 
@@ -170,9 +198,9 @@ defmodule BranchedLLM.Chat do
     Context.append(context, user(message))
   end
 
-  @spec add_assistant_message(Context.t(), String.t()) :: Context.t()
-  defp add_assistant_message(context, message) do
-    Context.append(context, assistant(message))
+  @spec add_assistant_message(Context.t(), String.t(), keyword()) :: Context.t()
+  defp add_assistant_message(context, message, opts \\ []) do
+    Context.append(context, assistant(message, opts))
   end
 
   @spec call_llm(String.t(), Context.t(), list()) ::

@@ -186,6 +186,8 @@ calculator_tool = ReqLLM.Tool.new(
     required: ["expression"]
   },
   execute: fn %{"expression" => expr} ->
+    # SECURITY WARNING: Using Code.eval_string on LLM output is dangerous.
+    # In a production app, use a safe math library or a restricted parser.
     try do
       {result, _} = Code.eval_string(expr)
       {:ok, to_string(result)}
