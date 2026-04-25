@@ -19,7 +19,7 @@ Add BranchedLLM to your `mix.exs`:
 ```elixir
 def deps do
   [
-    {:branched_llm, "~> 0.1.0"},
+    {:branched_llm, "~> 0.1.1"},
     {:req_llm, "~> 1.0.0"},
     {:ecto, "~> 3.13"}
   ]
