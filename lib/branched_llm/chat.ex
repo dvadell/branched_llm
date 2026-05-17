@@ -116,7 +116,7 @@ defmodule BranchedLLM.Chat do
     config = build_config(opts)
 
     updated_context =
-      if message != nil and message != "" do
+      if message != "" do
         add_user_message(context, message)
       else
         context
@@ -258,7 +258,7 @@ defmodule BranchedLLM.Chat do
         {:ok, stream_response, []}
     end
   rescue
-    e -> {:error, e}
+    e in Jason.EncodeError -> {:error, e}
   end
 
   defp dummy_stream_response(%StreamResponse{context: context, model: model}) do

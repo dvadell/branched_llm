@@ -1,19 +1,29 @@
 defmodule BranchedLLM.ToolCache.EctoTest do
   use ExUnit.Case, async: true
+
   alias BranchedLLM.ToolCache.Ecto, as: ToolCacheEcto
 
   setup do
-    # Clear any existing config to test the nil repo case
+    # Clear any existing config
     Application.put_env(:branched_llm, BranchedLLM.ToolCache, [])
+
+    on_exit(fn ->
+      Application.put_env(:branched_llm, BranchedLLM.ToolCache, [])
+    end)
+
     :ok
   end
 
-  test "get_result returns :error when no repo is configured" do
-    assert ToolCacheEcto.get_result("test", %{}) == :error
+  test "get_result raises when no repo is configured" do
+    assert_raise KeyError, fn ->
+      ToolCacheEcto.get_result("test", %{})
+    end
   end
 
-  test "save_result returns :ok when no repo is configured" do
-    assert ToolCacheEcto.save_result("test", %{}, "result") == :ok
+  test "save_result raises when no repo is configured" do
+    assert_raise KeyError, fn ->
+      ToolCacheEcto.save_result("test", %{}, "result")
+    end
   end
 
   defmodule MockRepo do
@@ -40,7 +50,5 @@ defmodule BranchedLLM.ToolCache.EctoTest do
 
     # Test non-map args normalization
     assert ToolCacheEcto.get_result("test", "simple_arg") == {:ok, "cached_result"}
-
-    Application.put_env(:branched_llm, BranchedLLM.ToolCache, [])
   end
 end
