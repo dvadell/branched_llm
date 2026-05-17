@@ -1,6 +1,7 @@
 defmodule BranchedLLM.BranchedChatTest do
   use ExUnit.Case, async: true
   import Mox
+
   alias BranchedLLM.{BranchedChat, Message}
   alias ReqLLM.Context
 
@@ -40,10 +41,12 @@ defmodule BranchedLLM.BranchedChatTest do
 
     test "sets branch name from first user message on empty-named branch" do
       messages = [Message.new(:system, "System")]
+
       stub(BranchedLLM.ChatMock, :reset_context, fn _ctx -> mock_context() end)
 
       chat = BranchedChat.new(mock_chat_module(), messages, mock_context())
       chat = BranchedChat.branch_off(chat, List.first(messages).id)
+
       long_content = String.duplicate("a", 50)
       chat = BranchedChat.add_user_message(chat, long_content)
 
@@ -129,7 +132,6 @@ defmodule BranchedLLM.BranchedChatTest do
       user_msg_id = Enum.at(messages, 1).id
 
       stub(BranchedLLM.ChatMock, :reset_context, fn _ctx -> mock_context() end)
-
       chat = BranchedChat.branch_off(chat, user_msg_id)
 
       assert length(chat.branch_ids) == 2
@@ -141,9 +143,7 @@ defmodule BranchedLLM.BranchedChatTest do
     test "returns unchanged chat if message not found" do
       chat = BranchedChat.new(mock_chat_module(), [], mock_context())
       old_chat = chat
-
       chat = BranchedChat.branch_off(chat, "nonexistent")
-
       assert chat.branch_ids == old_chat.branch_ids
     end
   end
@@ -160,7 +160,6 @@ defmodule BranchedLLM.BranchedChatTest do
 
       chat = BranchedChat.new(mock_chat_module(), messages, mock_context())
       msg_id = Enum.at(messages, 1).id
-
       chat = BranchedChat.delete_message(chat, msg_id)
 
       deleted_msg = Enum.find(BranchedChat.get_current_messages(chat), &(&1.id == msg_id))
@@ -179,10 +178,8 @@ defmodule BranchedLLM.BranchedChatTest do
 
       chat = BranchedChat.new(mock_chat_module(), messages, mock_context())
       msg_to_delete = Enum.at(messages, 3).id
-
       chat = BranchedChat.delete_message(chat, msg_to_delete)
 
-      # The deleted message should be marked deleted
       deleted = Enum.find(BranchedChat.get_current_messages(chat), &(&1.id == msg_to_delete))
       assert Message.deleted?(deleted)
     end
@@ -191,6 +188,7 @@ defmodule BranchedLLM.BranchedChatTest do
   describe "switch_branch/2" do
     test "changes the active branch" do
       messages = [Message.new(:system, "System")]
+
       stub(BranchedLLM.ChatMock, :reset_context, fn _ctx -> mock_context() end)
 
       chat = BranchedChat.new(mock_chat_module(), messages, mock_context())
@@ -207,9 +205,7 @@ defmodule BranchedLLM.BranchedChatTest do
     test "ignores unknown branch" do
       chat = BranchedChat.new(mock_chat_module(), [], mock_context())
       old_id = chat.current_branch_id
-
       chat = BranchedChat.switch_branch(chat, "unknown")
-
       assert chat.current_branch_id == old_id
     end
   end
@@ -217,7 +213,6 @@ defmodule BranchedLLM.BranchedChatTest do
   describe "busy?/2" do
     test "returns true when active_task is set" do
       chat = BranchedChat.new(mock_chat_module(), [], mock_context())
-
       refute BranchedChat.busy?(chat, "main")
 
       chat = BranchedChat.set_active_task(chat, "main", self(), "Hi")
@@ -230,7 +225,6 @@ defmodule BranchedLLM.BranchedChatTest do
       chat = BranchedChat.new(mock_chat_module(), [], mock_context())
       chat = BranchedChat.set_active_task(chat, "main", self(), "Hi")
       chat = BranchedChat.set_tool_status(chat, "main", "Thinking...")
-
       chat = BranchedChat.clear_active_task(chat, "main")
 
       assert chat.branches["main"].active_task == nil
@@ -254,22 +248,20 @@ defmodule BranchedLLM.BranchedChatTest do
   describe "build_tree/1" do
     test "builds hierarchical tree of branches" do
       messages = [Message.new(:system, "System")]
+
       stub(BranchedLLM.ChatMock, :reset_context, fn _ctx -> mock_context() end)
 
       chat = BranchedChat.new(mock_chat_module(), messages, mock_context())
       msg_id = List.first(messages).id
-
       chat = BranchedChat.branch_off(chat, msg_id)
       _child_branch_id = chat.current_branch_id
 
       chat = BranchedChat.add_user_message(chat, "Hi")
       child_msg = List.last(BranchedChat.get_current_messages(chat))
-
       chat = BranchedChat.branch_off(chat, child_msg.id)
       _grandchild_id = chat.current_branch_id
 
       tree = BranchedChat.build_tree(chat)
-
       assert length(tree) == 1
       assert List.first(tree).id == "main"
       assert length(List.first(tree).children) == 1
@@ -281,7 +273,6 @@ defmodule BranchedLLM.BranchedChatTest do
     test "sets tool status for a branch" do
       chat = BranchedChat.new(mock_chat_module(), [], mock_context())
       chat = BranchedChat.set_tool_status(chat, "main", "Using calculator...")
-
       assert chat.branches["main"].tool_status == "Using calculator..."
     end
   end
@@ -290,7 +281,6 @@ defmodule BranchedLLM.BranchedChatTest do
     test "returns the context of the active branch" do
       ctx = mock_context()
       chat = BranchedChat.new(mock_chat_module(), [], ctx)
-
       assert BranchedChat.get_current_context(chat) == ctx
     end
   end
@@ -319,14 +309,64 @@ defmodule BranchedLLM.BranchedChatTest do
       stub(BranchedLLM.ChatMock, :reset_context, fn ctx -> ctx end)
 
       chat = BranchedChat.new(mock_chat_module(), messages, mock_context())
-      # Branch off from the assistant's answer
-      assistant_id = Enum.at(messages, 2).id
 
+      assistant_id = Enum.at(messages, 2).id
       chat = BranchedChat.branch_off(chat, assistant_id)
 
-      # New branch should have system, user, assistant messages
       branch_messages = BranchedChat.get_current_messages(chat)
       assert length(branch_messages) == 3
+    end
+  end
+
+  describe "branch_off/2 with existing child branches" do
+    test "appends to existing child_branches when message already has children" do
+      messages = [
+        Message.new(:system, "System"),
+        Message.new(:user, "Hello"),
+        Message.new(:assistant, "Hi!")
+      ]
+
+      stub(BranchedLLM.ChatMock, :reset_context, fn _ctx -> mock_context() end)
+
+      chat = BranchedChat.new(mock_chat_module(), messages, mock_context())
+
+      # Branch off from the user message — first child
+      user_msg_id = Enum.at(messages, 1).id
+      chat = BranchedChat.branch_off(chat, user_msg_id)
+      first_child_id = chat.current_branch_id
+
+      # Switch back to main and branch off from the same message — second child
+      chat = BranchedChat.switch_branch(chat, "main")
+      chat = BranchedChat.branch_off(chat, user_msg_id)
+      second_child_id = chat.current_branch_id
+
+      # Both children should be tracked under the same message_id
+      assert length(chat.child_branches[user_msg_id]) == 2
+      assert first_child_id in chat.child_branches[user_msg_id]
+      assert second_child_id in chat.child_branches[user_msg_id]
+    end
+  end
+
+  describe "rebuild_context_from_messages skips system messages" do
+    test "system messages after the first are skipped during context rebuild" do
+      # Two system messages: the first is dropped by Enum.drop(1),
+      # the second hits the :system -> acc clause in rebuild_context_from_messages
+      messages = [
+        Message.new(:system, "Initial system"),
+        Message.new(:system, "Late system"),
+        Message.new(:user, "Question"),
+        Message.new(:assistant, "Answer")
+      ]
+
+      stub(BranchedLLM.ChatMock, :reset_context, fn ctx -> ctx end)
+
+      chat = BranchedChat.new(mock_chat_module(), messages, mock_context())
+
+      msg_to_delete = Enum.at(messages, 3).id
+      chat = BranchedChat.delete_message(chat, msg_to_delete)
+
+      deleted = Enum.find(BranchedChat.get_current_messages(chat), &(&1.id == msg_to_delete))
+      assert Message.deleted?(deleted)
     end
   end
 end

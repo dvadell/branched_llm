@@ -23,6 +23,7 @@ defmodule BranchedLLM.BranchedChat do
   """
 
   alias BranchedLLM.Message
+  alias ReqLLM.Context
 
   defstruct [
     :branches,
@@ -261,8 +262,8 @@ defmodule BranchedLLM.BranchedChat do
     |> Enum.reduce(t.chat_module.reset_context(t.branches[t.current_branch_id].context), fn msg,
                                                                                             acc ->
       case msg.role do
-        :user -> ReqLLM.Context.append(acc, ReqLLM.Context.user(msg.content))
-        :assistant -> ReqLLM.Context.append(acc, ReqLLM.Context.assistant(msg.content))
+        :user -> Context.append(acc, Context.user(msg.content))
+        :assistant -> Context.append(acc, Context.assistant(msg.content))
         :system -> acc
       end
     end)

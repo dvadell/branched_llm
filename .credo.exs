@@ -36,7 +36,7 @@
       #
       # Load and configure plugins here:
       #
-      plugins: [],
+      plugins: [{CredoContrib, []}],
       #
       # If you create your own checks, you must specify the source files for
       # them here, so they can be loaded by Credo before running the analysis.
@@ -161,7 +161,52 @@
           {Credo.Check.Warning.UnusedRegexOperation, []},
           {Credo.Check.Warning.UnusedStringOperation, []},
           {Credo.Check.Warning.UnusedTupleOperation, []},
-          {Credo.Check.Warning.WrongTestFilename, []}
+          {Credo.Check.Warning.WrongTestFilename, []},
+
+          # AI-slop from elixir-vibe
+          {ExSlop.Check.Warning.BlanketRescue, []},
+          {ExSlop.Check.Warning.RescueWithoutReraise, []},
+          {ExSlop.Check.Warning.RepoAllThenFilter, []},
+          {ExSlop.Check.Warning.QueryInEnumMap, []},
+          {ExSlop.Check.Warning.GenserverAsKvStore, []},
+          {ExSlop.Check.Warning.PathExpandPriv, []},
+          # {ExSlop.Check.Warning.DualKeyAccess, []},
+
+          {ExSlop.Check.Refactor.FilterNil, []},
+          {ExSlop.Check.Refactor.RejectNil, []},
+          {ExSlop.Check.Refactor.ReduceAsMap, []},
+          {ExSlop.Check.Refactor.MapIntoLiteral, []},
+          {ExSlop.Check.Refactor.IdentityPassthrough, []},
+          {ExSlop.Check.Refactor.IdentityMap, []},
+          {ExSlop.Check.Refactor.CaseTrueFalse, []},
+          {ExSlop.Check.Refactor.TryRescueWithSafeAlternative, []},
+          {ExSlop.Check.Refactor.WithIdentityElse, []},
+          {ExSlop.Check.Refactor.WithIdentityDo, []},
+          {ExSlop.Check.Refactor.SortThenReverse, []},
+          {ExSlop.Check.Refactor.StringConcatInReduce, []},
+          {ExSlop.Check.Refactor.ReduceMapPut, []},
+          {ExSlop.Check.Refactor.RedundantBooleanIf, []},
+          {ExSlop.Check.Refactor.FlatMapFilter, []},
+          {ExSlop.Check.Refactor.RedundantEnumJoinSeparator, []},
+          {ExSlop.Check.Refactor.UseMapJoin, []},
+          {ExSlop.Check.Refactor.PreferEnumSlice, []},
+          {ExSlop.Check.Refactor.GraphemesLength, []},
+          {ExSlop.Check.Refactor.ManualStringReverse, []},
+          {ExSlop.Check.Refactor.SortThenAt, []},
+          {ExSlop.Check.Refactor.SortForTopK, []},
+          {ExSlop.Check.Refactor.ListFold, []},
+
+          # Commented -- our lists are not that long, no need to optimize
+          # {ExSlop.Check.Refactor.ListLast, []},
+          {ExSlop.Check.Refactor.LengthInGuard, []},
+          {ExSlop.Check.Refactor.ExplicitSumReduce, []},
+          {ExSlop.Check.Readability.NarratorDoc, []},
+          {ExSlop.Check.Readability.DocFalseOnPublicFunction, []},
+          {ExSlop.Check.Readability.BoilerplateDocParams, []},
+          {ExSlop.Check.Readability.ObviousComment, [additional_keywords: []]},
+          {ExSlop.Check.Readability.StepComment, []},
+          {ExSlop.Check.Readability.NarratorComment, []},
+          {ExSlop.Check.Readability.UnaliasedModuleUse, []}
         ],
         disabled: [
           #

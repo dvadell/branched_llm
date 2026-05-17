@@ -42,13 +42,49 @@ defmodule BranchedLLM.ToolCache.EctoTest do
     def insert_all(_schema, _data), do: {1, nil}
   end
 
-  test "get_result and save_result with mock repo and map args" do
+  defmodule EmptyRepo do
+    defmodule ToolResult do
+      use Ecto.Schema
+
+      schema "tool_results" do
+        field(:tool_name, :string)
+        field(:args, :map)
+        field(:result, :any, virtual: true)
+        timestamps()
+      end
+    end
+
+    def one(_query), do: nil
+    def insert_all(_schema, _data), do: {1, nil}
+  end
+
+  test "get_result returns {:ok, result} when repo finds a match" do
     Application.put_env(:branched_llm, BranchedLLM.ToolCache, repo: MockRepo)
 
-    # Test map args normalization (atom keys to string)
     assert ToolCacheEcto.get_result("test", %{a: 1}) == {:ok, "cached_result"}
+  end
 
-    # Test non-map args normalization
+  test "get_result returns :error when repo finds no match" do
+    Application.put_env(:branched_llm, BranchedLLM.ToolCache, repo: EmptyRepo)
+
+    assert ToolCacheEcto.get_result("test", %{a: 1}) == :error
+  end
+
+  test "save_result inserts and returns :ok with mock repo" do
+    Application.put_env(:branched_llm, BranchedLLM.ToolCache, repo: MockRepo)
+
+    assert ToolCacheEcto.save_result("test", %{a: 1}, "result") == :ok
+  end
+
+  test "save_result normalizes non-map args" do
+    Application.put_env(:branched_llm, BranchedLLM.ToolCache, repo: MockRepo)
+
+    assert ToolCacheEcto.save_result("test", "simple_arg", "result") == :ok
+  end
+
+  test "get_result with non-map args normalization" do
+    Application.put_env(:branched_llm, BranchedLLM.ToolCache, repo: MockRepo)
+
     assert ToolCacheEcto.get_result("test", "simple_arg") == {:ok, "cached_result"}
   end
 end
