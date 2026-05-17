@@ -178,10 +178,12 @@ defmodule BranchedLLM.Chat do
 
   @doc """
   Returns the default model string.
+  Reads from :req_llm config first, falls back to :branched_llm, then to a default.
   """
   @spec default_model() :: String.t()
   def default_model do
-    Application.get_env(:branched_llm, :ai_model, "openai:cara-cpu")
+    Application.get_env(:req_llm, :model) ||
+      Application.get_env(:branched_llm, :ai_model, "openai:cara-cpu")
   end
 
   ## Private Functions
@@ -357,27 +359,28 @@ defmodule BranchedLLM.Chat do
   end
 
   defp endpoints do
-    # First check branched_llm config
-    base_url = Application.get_env(:branched_llm, :base_url)
-
+    # Read base_url from :req_llm openai config (single source of truth)
+    # Falls back to :branched_llm base_url for backward compatibility
     config_url =
-      if base_url do
-        base_url
-      else
-        :req_llm
-        |> Application.get_env(:openai, [])
-        |> Keyword.get(:base_url)
-      end
+      :req_llm
+      |> Application.get_env(:openai, [])
+      |> Keyword.get(:base_url) ||
+        Application.get_env(:branched_llm, :base_url)
 
+    # If the config URL already includes /v1, use it as-is for model_endpoint.
+    # Otherwise append /v1 (backward compat with Ollama-style base URLs).
     uri = URI.parse(config_url)
     port_str = if uri.port, do: ":#{uri.port}", else: ""
     base_url = "#{uri.scheme}://#{uri.host}#{port_str}"
 
-    %{
-      base_url: base_url,
-      model_endpoint: base_url <> "/v1",
-      health_endpoint: base_url <> "/api/tags"
-    }
+    model_endpoint =
+      if String.ends_with?(config_url, "/v1") do
+        config_url
+      else
+        base_url <> "/v1"
+      end
+
+    %{base_url: base_url, model_endpoint: model_endpoint, health_endpoint: base_url <> "/api/tags"}
   end
 
   # OpenTelemetry helpers
