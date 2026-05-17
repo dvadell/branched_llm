@@ -116,8 +116,8 @@ defmodule BranchedLLM.LLM.StreamParser do
 
   defp build_tool_call(call, fragments) do
     metadata = Map.get(call, :metadata, %{})
-    index = Map.get(metadata, :index) || Map.get(call, :index)
-    id = Map.get(metadata, :id) || Map.get(call, :id)
+    index = Map.get(metadata, :index)
+    id = Map.get(metadata, :id)
     name = Map.get(call, :name) || Map.get(metadata, :name)
 
     arguments_json =

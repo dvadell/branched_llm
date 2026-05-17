@@ -1,8 +1,11 @@
 defmodule BranchedLLMTest do
   use ExUnit.Case, async: false
+
   import Mox
+
   alias BranchedLLM.BranchedChat
   alias ReqLLM.Context
+  alias ReqLLM.StreamResponse.MetadataHandle
 
   setup :set_mox_from_context
 
@@ -24,6 +27,7 @@ defmodule BranchedLLMTest do
 
       expect(BranchedLLM.ChatMock, :send_message_stream, 1, fn _msg, _ctx, _opts ->
         stream = Stream.map(["Hi"], &%{text: &1, type: :content})
+        {:ok, metadata_handle} = MetadataHandle.start_link(fn -> %{} end)
 
         {:ok,
          %ReqLLM.StreamResponse{
@@ -31,7 +35,7 @@ defmodule BranchedLLMTest do
            context: ctx,
            model: "mock",
            cancel: fn -> :ok end,
-           metadata_task: Task.async(fn -> %{} end)
+           metadata_handle: metadata_handle
          }, fn t -> Context.new([Context.assistant(t)]) end, []}
       end)
 

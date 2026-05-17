@@ -1,5 +1,6 @@
 defmodule BranchedLLM.LLM.StreamParserTest do
   use ExUnit.Case, async: true
+
   alias BranchedLLM.LLM.StreamParser
 
   describe "consume_until_intent/1" do
@@ -14,7 +15,6 @@ defmodule BranchedLLM.LLM.StreamParserTest do
         )
 
       {:tool_call, consumed, _remaining} = StreamParser.consume_until_intent(stream)
-
       assert Enum.any?(consumed, fn c -> c.type == :tool_call end)
     end
 
@@ -29,13 +29,11 @@ defmodule BranchedLLM.LLM.StreamParserTest do
         )
 
       {:content, consumed, _remaining} = StreamParser.consume_until_intent(stream)
-
       assert Enum.any?(consumed, fn c -> c.type == :content and c.text != "" end)
     end
 
     test "returns empty for empty stream" do
       stream = Stream.map([], & &1)
-
       {:empty, _consumed} = StreamParser.consume_until_intent(stream)
     end
   end
@@ -43,9 +41,7 @@ defmodule BranchedLLM.LLM.StreamParserTest do
   describe "consume_to_text/1" do
     test "concatenates all content chunks" do
       stream = Stream.map(["Hello", ", ", "world", "!"], &ReqLLM.StreamChunk.text/1)
-
       result = StreamParser.consume_to_text(stream)
-
       assert result == "Hello, world!"
     end
   end
@@ -54,15 +50,12 @@ defmodule BranchedLLM.LLM.StreamParserTest do
     test "accumulates content chunks" do
       acc = StreamParser.accumulate_text(ReqLLM.StreamChunk.text("Hello"), "")
       acc = StreamParser.accumulate_text(ReqLLM.StreamChunk.text(" world"), acc)
-
       assert acc == "Hello world"
     end
 
     test "ignores non-content chunks" do
       chunk = ReqLLM.StreamChunk.meta(%{finish_reason: "stop"})
-
       result = StreamParser.accumulate_text(chunk, "existing")
-
       assert result == "existing"
     end
   end
@@ -74,7 +67,6 @@ defmodule BranchedLLM.LLM.StreamParserTest do
       ]
 
       result = StreamParser.extract_tool_calls(chunks)
-
       assert length(result) == 1
       tool_call = List.first(result)
       assert ReqLLM.ToolCall.name(tool_call) == "calculator"
@@ -82,18 +74,14 @@ defmodule BranchedLLM.LLM.StreamParserTest do
 
     test "returns empty list for no tool calls" do
       chunks = [ReqLLM.StreamChunk.text("Hello"), ReqLLM.StreamChunk.text(" world")]
-
       result = StreamParser.extract_tool_calls(chunks)
-
       assert result == []
     end
 
     test "deduplicates tool calls by ID" do
       call1 = ReqLLM.StreamChunk.tool_call("calc", %{"expr" => "1+1"})
       call2 = ReqLLM.StreamChunk.tool_call("calc", %{"expr" => "2+2"})
-
       result = StreamParser.extract_tool_calls([call1, call2])
-
       assert length(result) == 2
     end
 
@@ -104,90 +92,66 @@ defmodule BranchedLLM.LLM.StreamParserTest do
 
       result = StreamParser.extract_tool_calls(chunks)
       tool_call = List.first(result)
-
       assert ReqLLM.ToolCall.name(tool_call) == "weather"
       args = ReqLLM.ToolCall.args_map(tool_call)
       assert args["location"] == "NYC"
     end
 
     test "extracts arguments from meta fragments" do
-      meta_chunk = %ReqLLM.StreamChunk{
-        type: :meta,
-        metadata: %{
+      meta_chunk =
+        ReqLLM.StreamChunk.meta(%{
           tool_call_args: %{
             index: 0,
             fragment: "{\"location\":\"NYC\"}"
           }
-        }
-      }
+        })
 
       tool_chunk = ReqLLM.StreamChunk.tool_call("weather", %{})
-
       result = StreamParser.extract_tool_calls([tool_chunk, meta_chunk])
-
       assert length(result) == 1
     end
 
-    test "handles nil arguments with fallback" do
-      chunk = %ReqLLM.StreamChunk{type: :tool_call, name: "test", arguments: nil}
-
+    test "handles empty arguments with fallback" do
+      chunk = ReqLLM.StreamChunk.tool_call("test", %{})
       result = StreamParser.extract_tool_calls([chunk])
-
       assert length(result) == 1
     end
 
-    test "extracts arguments from string arguments" do
-      chunk = %ReqLLM.StreamChunk{type: :tool_call, name: "test", arguments: "{\"a\":1}"}
-
+    test "extracts arguments from map arguments via tool_call constructor" do
+      chunk = ReqLLM.StreamChunk.tool_call("test", %{"a" => 1})
       result = StreamParser.extract_tool_calls([chunk])
-
       assert length(result) == 1
     end
 
     test "handles tool call with metadata index and id" do
-      chunk = %ReqLLM.StreamChunk{
-        type: :tool_call,
-        name: "weather",
-        arguments: %{"city" => "NYC"},
-        metadata: %{index: 0, id: "call_xyz"}
-      }
+      chunk =
+        ReqLLM.StreamChunk.tool_call("weather", %{"city" => "NYC"}, %{index: 0, id: "call_xyz"})
 
       result = StreamParser.extract_tool_calls([chunk])
-
       assert length(result) == 1
       tool_call = List.first(result)
       assert ReqLLM.ToolCall.name(tool_call) == "weather"
     end
 
     test "handles meta chunks with tool_call_args fragment" do
-      meta_chunk = %ReqLLM.StreamChunk{
-        type: :meta,
-        metadata: %{
+      meta_chunk =
+        ReqLLM.StreamChunk.meta(%{
           tool_call_args: %{
             index: 0,
             fragment: "{\"expr\":\"1+1\"}"
           }
-        }
-      }
+        })
 
-      tool_chunk = %ReqLLM.StreamChunk{
-        type: :tool_call,
-        name: "calc",
-        arguments: nil
-      }
-
+      tool_chunk = ReqLLM.StreamChunk.tool_call("calc", %{})
       result = StreamParser.extract_tool_calls([tool_chunk, meta_chunk])
-
       assert length(result) == 1
       tool_call = List.first(result)
       assert ReqLLM.ToolCall.name(tool_call) == "calc"
     end
 
     test "handles empty tool arguments fallback" do
-      chunk = %ReqLLM.StreamChunk{type: :tool_call, name: "test", arguments: nil}
-
+      chunk = ReqLLM.StreamChunk.tool_call("test", %{})
       result = StreamParser.extract_tool_calls([chunk])
-
       tool_call = List.first(result)
       args = ReqLLM.ToolCall.args_map(tool_call)
       assert args == %{}
@@ -197,26 +161,19 @@ defmodule BranchedLLM.LLM.StreamParserTest do
       chunk = %ReqLLM.StreamChunk{
         type: :tool_call,
         name: nil,
-        arguments: nil,
+        arguments: %{},
         metadata: %{name: "weather_from_meta"}
       }
 
       result = StreamParser.extract_tool_calls([chunk])
-
       assert length(result) == 1
       tool_call = List.first(result)
       assert ReqLLM.ToolCall.name(tool_call) == "weather_from_meta"
     end
 
     test "extracts arguments from map arguments via Jason encoding" do
-      chunk = %ReqLLM.StreamChunk{
-        type: :tool_call,
-        name: "test",
-        arguments: %{"key" => "value"}
-      }
-
+      chunk = ReqLLM.StreamChunk.tool_call("test", %{"key" => "value"})
       result = StreamParser.extract_tool_calls([chunk])
-
       assert length(result) == 1
     end
 
@@ -228,29 +185,22 @@ defmodule BranchedLLM.LLM.StreamParserTest do
 
     test "extracts arguments from meta fragment when index matches" do
       # Tool call chunk with index in metadata
-      tool_chunk = %ReqLLM.StreamChunk{
-        type: :tool_call,
-        name: "calc",
-        arguments: nil,
-        metadata: %{index: 0}
-      }
+      tool_chunk = ReqLLM.StreamChunk.tool_call("calc", %{}, %{index: 0})
 
       # Meta chunk with matching index and fragment
-      meta_chunk = %ReqLLM.StreamChunk{
-        type: :meta,
-        metadata: %{
+      meta_chunk =
+        ReqLLM.StreamChunk.meta(%{
           tool_call_args: %{
             index: 0,
             fragment: "{\"expression\":\"1+1\"}"
           }
-        }
-      }
+        })
 
       result = StreamParser.extract_tool_calls([tool_chunk, meta_chunk])
-
       assert length(result) == 1
       tool_call_result = List.first(result)
       assert ReqLLM.ToolCall.name(tool_call_result) == "calc"
+
       # The arguments should come from the meta fragment, not the tool_call chunk
       args = ReqLLM.ToolCall.args_map(tool_call_result)
       assert args["expression"] == "1+1"

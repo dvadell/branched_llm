@@ -42,6 +42,7 @@ defmodule BranchedLLM.ChatOrchestrator do
   alias BranchedLLM.LLMErrorFormatter
   alias BranchedLLM.ToolHandler
   alias ReqLLM.Context
+  alias ReqLLM.StreamResponse.MetadataHandle
 
   @type llm_call_params :: %{
           message: String.t(),
@@ -245,7 +246,7 @@ defmodule BranchedLLM.ChatOrchestrator do
     end_time = :erlang.monotonic_time(:millisecond)
     Logger.info("LLM streaming of answer took #{end_time - start_time}ms")
 
-    metadata = Task.await(stream_response.metadata_task)
+    metadata = MetadataHandle.await(stream_response.metadata_handle)
     Logger.info("LLM stream complete metadata: #{inspect(metadata)}")
 
     if sent_any_chunks do

@@ -95,14 +95,14 @@ IO.puts(response)
 ### 3. Streaming with tools
 
 ```elixir
-calculator_tool = ReqLLM.Tool.new(
+calculator_tool = ReqLLM.Tool.new!(
   name: "calculator",
   description: "Evaluates a mathematical expression",
-  parameters: %{
+  parameter_schema: %{
     type: "object",
     properties: %{expression: %{type: "string"}}
   },
-  execute: fn %{"expression" => expr} ->
+  callback: fn %{"expression" => expr} ->
     # SECURITY WARNING: Using Code.eval_string on LLM output is dangerous.
     # In a production app, use a safe math library or a restricted parser.
     {result, _} = Code.eval_string(expr)
@@ -116,7 +116,7 @@ calculator_tool = ReqLLM.Tool.new(
 # Consume the stream
 stream_response
 |> ReqLLM.StreamResponse.tokens()
-|> Enum.each(fn chunk -> IO.write(chunk.text) end)
+|> Enum.each(fn chunk -> IO.write(chunk) end)
 ```
 
 ### 4. Branching conversations

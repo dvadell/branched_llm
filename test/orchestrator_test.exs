@@ -1,8 +1,11 @@
 defmodule BranchedLLM.OrchestratorTest do
   use ExUnit.Case, async: false
+
   import Mox
+
   alias BranchedLLM.ChatOrchestrator
   alias ReqLLM.Context
+  alias ReqLLM.StreamResponse.MetadataHandle
 
   setup :set_mox_from_context
 
@@ -12,13 +15,14 @@ defmodule BranchedLLM.OrchestratorTest do
 
   defp stream_response(tokens) do
     stream = Stream.map(tokens, &%{text: &1, type: :content})
+    {:ok, metadata_handle} = MetadataHandle.start_link(fn -> %{} end)
 
     %ReqLLM.StreamResponse{
       stream: stream,
       context: Context.new([]),
       model: "gpt-mock",
       cancel: fn -> :ok end,
-      metadata_task: Task.async(fn -> %{} end)
+      metadata_handle: metadata_handle
     }
   end
 
@@ -119,7 +123,9 @@ defmodule BranchedLLM.OrchestratorTest do
       end)
 
       # Mock execute_tool for the tool call
-      expect(BranchedLLM.ChatMock, :execute_tool, 1, fn _tool, _args -> {:ok, "Sunny"} end)
+      expect(BranchedLLM.ChatMock, :execute_tool, 1, fn _tool, _args ->
+        {:ok, "Sunny"}
+      end)
 
       # Second call (after recursion) returns text
       expect(BranchedLLM.ChatMock, :send_message_stream, 1, fn _msg, _ctx, _opts ->

@@ -8,10 +8,12 @@ defmodule BranchedLLM.UUIDTest do
   end
 
   test "uses Ecto.UUID when Uniq.UUID is not available" do
-    result = BranchedLLM.UUID.generate(fn
-      Uniq.UUID -> false
-      _ -> true
-    end)
+    result =
+      BranchedLLM.UUID.generate(fn
+        Uniq.UUID -> false
+        _ -> true
+      end)
+
     assert result =~ ~r/^[0-9a-f-]{36}$/
   end
 

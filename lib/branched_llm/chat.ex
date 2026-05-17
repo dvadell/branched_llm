@@ -24,6 +24,7 @@ defmodule BranchedLLM.Chat do
   alias BranchedLLM.LLM.StreamParser
   alias ReqLLM.Context
   alias ReqLLM.StreamResponse
+  alias ReqLLM.StreamResponse.MetadataHandle
 
   @behaviour BranchedLLM.ChatBehaviour
   @type stream_chunk :: %{type: atom(), text: String.t()}
@@ -262,12 +263,14 @@ defmodule BranchedLLM.Chat do
   end
 
   defp dummy_stream_response(%StreamResponse{context: context, model: model}) do
+    {:ok, metadata_handle} = MetadataHandle.start_link(fn -> %{} end)
+
     %StreamResponse{
       stream: [%ReqLLM.StreamChunk{type: :content, text: ""}],
       context: context,
       model: model,
       cancel: fn -> :ok end,
-      metadata_task: Task.async(fn -> %{} end)
+      metadata_handle: metadata_handle
     }
   end
 
