@@ -77,8 +77,7 @@ defmodule BranchedLLM.Chat do
   defp wait_for_sync_result(ref, acc) do
     receive do
       {^ref, :chunk, chunk} ->
-        text = if is_map(chunk), do: Map.get(chunk, :text, ""), else: to_string(chunk)
-        wait_for_sync_result(ref, acc <> text)
+        wait_for_sync_result(ref, acc <> chunk)
 
       {^ref, :end, builder} ->
         {:ok, acc, builder.(acc)}

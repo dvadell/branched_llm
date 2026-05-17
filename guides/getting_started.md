@@ -20,7 +20,7 @@ Add BranchedLLM to your `mix.exs`:
 def deps do
   [
     {:branched_llm, "~> 0.1.1"},
-    {:req_llm, "~> 1.0.0"},
+    {:req_llm, "~> 1.11.0"},
     {:ecto, "~> 3.13"}
   ]
 end
@@ -75,13 +75,13 @@ For real-time UI updates, use `send_message_stream/3`:
 stream_response
 |> ReqLLM.StreamResponse.tokens()
 |> Enum.each(fn chunk ->
-  IO.write(chunk.text)
+  IO.write(chunk)
 end)
 
 IO.puts("")
 
 # Build the final context with the assistant's complete response
-final_text = Enum.map_join(ReqLLM.StreamResponse.tokens(stream_response), & &1.text)
+final_text = Enum.map_join(ReqLLM.StreamResponse.tokens(stream_response), & &1)
 new_context = context_builder.(final_text)
 ```
 
@@ -98,9 +98,8 @@ One of BranchedLLM's standout features is the ability to fork conversations at a
 ```elixir
 alias BranchedLLM.{BranchedChat, Message}
 
-# Start with some initial messages
+# Start with some initial messages (system prompt lives in the context, not the message list)
 messages = [
-  Message.new(:system, "You are a helpful assistant."),
   Message.new(:user, "What programming languages do you know about?"),
   Message.new(:assistant, "I know many languages including Elixir, Python, Rust, and more!")
 ]
@@ -172,10 +171,10 @@ Tools let the LLM call your code to perform actions like calculations, searches,
 ### Defining a Tool
 
 ```elixir
-calculator_tool = ReqLLM.Tool.new(
+calculator_tool = ReqLLM.Tool.new!(
   name: "calculator",
   description: "Evaluates a mathematical expression and returns the result",
-  parameters: %{
+  parameter_schema: %{
     type: "object",
     properties: %{
       expression: %{
@@ -185,7 +184,7 @@ calculator_tool = ReqLLM.Tool.new(
     },
     required: ["expression"]
   },
-  execute: fn %{"expression" => expr} ->
+  callback: fn %{"expression" => expr} ->
     # SECURITY WARNING: Using Code.eval_string on LLM output is dangerous.
     # In a production app, use a safe math library or a restricted parser.
     try do
@@ -267,6 +266,9 @@ For web interfaces, you don't want to block the UI while waiting for the LLM. `C
 alias BranchedLLM.ChatOrchestrator
 
 caller_pid = self()
+# llm_context holds the conversation history (system prompt + past messages).
+# message is the new user input — it gets appended to the context before calling the LLM.
+# They're separate so you can reuse the same context across multiple requests.
 params = %{
   message: "What is Elixir?",
   llm_context: context,

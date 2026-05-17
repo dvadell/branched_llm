@@ -124,9 +124,8 @@ stream_response
 ```elixir
 alias BranchedLLM.{BranchedChat, Message}
 
-# Start with an initial conversation
-messages = [Message.new(:system, "You are helpful.")]
-branched_chat = BranchedChat.new(Chat, messages, context)
+# The system prompt lives in the ReqLLM.Context, no need to duplicate it in messages
+branched_chat = BranchedChat.new(Chat, [], context)
 
 # Add a message
 branched_chat = BranchedChat.add_user_message(branched_chat, "What is 2+2?")
