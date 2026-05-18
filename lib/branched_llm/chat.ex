@@ -7,26 +7,25 @@ defmodule BranchedLLM.Chat do
 
   ## Configuration
 
-      config :branched_llm,
-        ai_model: "openai:gpt-4",
-        base_url: "http://localhost:11434"
+      config :branched_llm, ai_model: "openai:gpt-4", base_url: "http://localhost:11434"
 
   Or configure via `:req_llm`:
 
-      config :req_llm,
-        openai: [base_url: "http://localhost:11434/api"]
-
+      config :req_llm, openai: [base_url: "http://localhost:11434/api"]
   """
-  import ReqLLM.Context
 
+  import ReqLLM.Context
   require Logger
 
   alias BranchedLLM.LLM.StreamParser
+  alias BranchedLLM.LLM.StreamResult
+  alias BranchedLLM.LLM.StreamResult.{ContentResult, EmptyResult, ErrorResult, ToolCallResult}
+
   alias ReqLLM.Context
   alias ReqLLM.StreamResponse
-  alias ReqLLM.StreamResponse.MetadataHandle
 
   @behaviour BranchedLLM.ChatBehaviour
+
   @type stream_chunk :: %{type: atom(), text: String.t()}
 
   ## Public API
@@ -76,33 +75,28 @@ defmodule BranchedLLM.Chat do
 
   defp wait_for_sync_result(ref, acc) do
     receive do
-      {^ref, :chunk, chunk} ->
-        wait_for_sync_result(ref, acc <> chunk)
-
-      {^ref, :end, builder} ->
-        {:ok, acc, builder.(acc)}
-
-      {^ref, :error, err} ->
-        {:error, err}
+      {^ref, :chunk, chunk} -> wait_for_sync_result(ref, acc <> chunk)
+      {^ref, :end, builder} -> {:ok, acc, builder.(acc)}
+      {^ref, :error, err} -> {:error, err}
     after
       60_000 -> {:error, "Timed out waiting for LLM response"}
     end
   end
 
   @doc """
-  Sends a message and returns a stream of text chunks plus the updated context,
-  and any tool calls made by the LLM.
-  Perfect for web interfaces that need to stream responses to users and handle tools.
+  Sends a message and returns a `BranchedLLM.LLM.StreamResult` tagged union.
+
+  The result is one of three structs that clearly distinguishes the LLM's intent:
+
+    * `%ContentResult{}` — The LLM is streaming text content.
+    * `%ToolCallResult{}` — The LLM is invoking one or more tools.
+    * `%EmptyResult{}` — The LLM returned neither content nor tool calls.
 
   ## Examples
 
       iex> context = BranchedLLM.Chat.new_context("You are a helpful assistant")
-      iex> {:ok, stream, context_builder, tool_calls} = BranchedLLM.Chat.send_message_stream("Hello!", context, tools: [some_tool()])
-      iex> Enum.each(stream, fn chunk -> IO.write(chunk) end)
-
-  ## Returns
-
-    * `{:ok, stream, context_builder_fn, tool_calls}` - Stream of text chunks, a function to build final context, and a list of tool calls
+      iex> {:ok, %ContentResult{} = result} = BranchedLLM.Chat.send_message_stream("Hello!", context)
+      iex> Enum.each(result.stream, fn chunk -> IO.write(chunk) end)
 
   ## Options
 
@@ -111,7 +105,7 @@ defmodule BranchedLLM.Chat do
   """
   @impl true
   @spec send_message_stream(String.t(), Context.t(), keyword()) ::
-          {:ok, ReqLLM.StreamResponse.t(), (String.t() -> Context.t()), list()} | {:error, term()}
+          {:ok, StreamResult.t()} | {:error, term()}
   def send_message_stream(message, context, opts \\ []) do
     config = build_config(opts)
 
@@ -122,14 +116,12 @@ defmodule BranchedLLM.Chat do
         context
       end
 
-    case call_llm(config.model, updated_context, config.tools) do
-      {:ok, stream_response, tool_calls} ->
-        context_builder = fn final_text -> add_assistant_message(updated_context, final_text) end
-        {:ok, stream_response, context_builder, tool_calls}
-
-      {:error, reason} ->
-        {:error, reason}
+    context_builder = fn final_text ->
+      add_assistant_message(updated_context, final_text)
     end
+
+    call_llm(config.model, updated_context, config.tools)
+    |> unwrap_call_llm_result(context_builder)
   end
 
   @doc """
@@ -138,7 +130,6 @@ defmodule BranchedLLM.Chat do
   ## Examples
 
       iex> context = BranchedLLM.Chat.new_context("You are a helpful coding assistant")
-
   """
   @impl true
   @spec new_context(String.t()) :: Context.t()
@@ -153,8 +144,7 @@ defmodule BranchedLLM.Chat do
 
       iex> context = BranchedLLM.Chat.new_context()
       iex> history = BranchedLLM.Chat.get_history(context)
-      iex> length(history)
-      1
+      iex> length(history) 1
   """
   @spec get_history(Context.t()) :: list()
   def get_history(context) do
@@ -205,25 +195,15 @@ defmodule BranchedLLM.Chat do
     Context.append(context, assistant(message, opts))
   end
 
-  @spec call_llm(String.t(), Context.t(), list()) ::
-          {:ok, StreamResponse.t(), list()} | {:error, term()}
+  @spec call_llm(String.t(), Context.t(), list()) :: StreamResult.t()
   defp call_llm(model, context, tools) do
-    do_call_llm(model, context, tools)
-  end
-
-  defp do_call_llm(model, context, tools) do
     Logger.info("LLM call_llm starting with context: #{inspect(context)}")
     start_time = :erlang.monotonic_time(:millisecond)
 
-    %{model_endpoint: model_endpoint} = endpoints()
-
     result =
-      case ReqLLM.stream_text(model, context.messages, tools: tools, base_url: model_endpoint) do
-        {:ok, stream_response} ->
-          stream_result(stream_response, tools)
-
-        {:error, reason} ->
-          {:error, reason}
+      case __MODULE__.stream_text(model, context, tools: tools) do
+        {:ok, stream_response} -> stream_result(stream_response, tools)
+        {:error, reason} -> %ErrorResult{reason: reason}
       end
 
     end_time = :erlang.monotonic_time(:millisecond)
@@ -235,44 +215,76 @@ defmodule BranchedLLM.Chat do
     result
   end
 
-  defp stream_result(stream_response, []), do: {:ok, stream_response, []}
+  @doc false
+  @impl true
+  @spec stream_text(String.t(), Context.t(), keyword()) ::
+          {:ok, StreamResponse.t()} | {:error, term()}
+  def stream_text(model, context, opts) do
+    model_endpoint = Keyword.get(opts, :base_url, endpoints().model_endpoint)
+    tools = Keyword.get(opts, :tools, [])
+    ReqLLM.stream_text(model, context.messages, tools: tools, base_url: model_endpoint)
+  end
+
+  @spec unwrap_call_llm_result(StreamResult.t(), (String.t() -> Context.t())) ::
+          {:ok, StreamResult.t()} | {:error, term()}
+  defp unwrap_call_llm_result(%ErrorResult{reason: reason}, _context_builder) do
+    {:error, reason}
+  end
+
+  defp unwrap_call_llm_result(result, context_builder) do
+    {:ok, inject_context_builder(result, context_builder)}
+  end
+
+  @spec inject_context_builder(StreamResult.t(), (String.t() -> Context.t())) :: StreamResult.t()
+  defp inject_context_builder(%ContentResult{} = result, context_builder) do
+    %{result | context_builder: context_builder}
+  end
+
+  defp inject_context_builder(%ToolCallResult{} = result, context_builder) do
+    %{result | context_builder: context_builder}
+  end
+
+  defp inject_context_builder(%EmptyResult{} = result, context_builder) do
+    %{result | context_builder: context_builder}
+  end
+
+  # When no tools are provided, the stream is always content — no intent detection needed.
+  @spec stream_result(StreamResponse.t(), list()) :: {:ok, StreamResult.t()} | {:error, term()}
+  defp stream_result(stream_response, []),
+    do: {:ok, %ContentResult{stream: stream_response, context_builder: nil}}
+
+  # When tools are provided, peek at the stream to determine intent.
   defp stream_result(stream_response, _tools), do: handle_stream_for_tools(stream_response)
 
   # Peeks at the stream to see if the LLM is calling a tool or just talking.
+  # Returns a tagged StreamResult struct instead of the old 3-tuple + dummy stream.
   defp handle_stream_for_tools(%StreamResponse{stream: stream} = stream_response) do
-    # We take chunks until we see a tool call or content with text.
     case StreamParser.consume_until_intent(stream) do
       {:tool_call, consumed_chunks, remaining_stream} ->
         # It's a tool call! Consume the whole stream to get all arguments.
         all_chunks = consumed_chunks ++ Enum.to_list(remaining_stream)
         tool_calls = StreamParser.extract_tool_calls(all_chunks)
 
-        # We need to provide a dummy stream because the original one is consumed
-        {:ok, dummy_stream_response(stream_response), tool_calls}
+        {:ok,
+         %ToolCallResult{
+           tool_calls: tool_calls,
+           context: stream_response.context,
+           context_builder: nil
+         }}
 
       {:content, consumed_chunks, remaining_stream} ->
         # It's content (text). Prepend the chunks we took and return as a normal stream.
         new_stream = Stream.concat(consumed_chunks, remaining_stream)
-        {:ok, %{stream_response | stream: new_stream}, []}
+
+        {:ok,
+         %ContentResult{stream: %{stream_response | stream: new_stream}, context_builder: nil}}
 
       {:empty, _consumed_chunks} ->
-        # Empty stream
-        {:ok, stream_response, []}
+        # Empty stream — explicit empty result, no dummy stream.
+        {:ok, %EmptyResult{context_builder: nil}}
     end
   rescue
     e in Jason.EncodeError -> {:error, e}
-  end
-
-  defp dummy_stream_response(%StreamResponse{context: context, model: model}) do
-    {:ok, metadata_handle} = MetadataHandle.start_link(fn -> %{} end)
-
-    %StreamResponse{
-      stream: [%ReqLLM.StreamChunk{type: :content, text: ""}],
-      context: context,
-      model: model,
-      cancel: fn -> :ok end,
-      metadata_handle: metadata_handle
-    }
   end
 
   @doc """
@@ -286,7 +298,6 @@ defmodule BranchedLLM.Chat do
   Or passed directly via opts:
 
       BranchedLLM.Chat.execute_tool(tool, args, cache: MyApp.ToolCache)
-
   """
   @impl true
   @spec execute_tool(ReqLLM.Tool.t(), map(), keyword()) :: {:ok, term()} | {:error, term()}
@@ -303,9 +314,11 @@ defmodule BranchedLLM.Chat do
       {:ok, result} ->
         Logger.info("Tool '#{tool.name}' result retrieved from cache.")
 
-        :telemetry.execute([:branched_llm, :ai, :tool, :cache, :hit], %{count: 1}, %{
-          tool: tool.name
-        })
+        :telemetry.execute(
+          [:branched_llm, :ai, :tool, :cache, :hit],
+          %{count: 1},
+          %{tool: tool.name}
+        )
 
         {:ok, result}
 
@@ -335,7 +348,6 @@ defmodule BranchedLLM.Chat do
   @impl true
   def health_check do
     %{health_endpoint: health_endpoint} = endpoints()
-
     Logger.info("Checking AI health at: #{health_endpoint}")
 
     case Req.new(
@@ -358,6 +370,11 @@ defmodule BranchedLLM.Chat do
     end
   end
 
+  @spec endpoints() :: %{
+          base_url: String.t(),
+          model_endpoint: String.t(),
+          health_endpoint: String.t()
+        }
   defp endpoints do
     # Read base_url from :req_llm openai config (single source of truth)
     # Falls back to :branched_llm base_url for backward compatibility
@@ -365,13 +382,16 @@ defmodule BranchedLLM.Chat do
       :req_llm
       |> Application.get_env(:openai, [])
       |> Keyword.get(:base_url) ||
-        Application.get_env(:branched_llm, :base_url)
+        Application.get_env(:branched_llm, :base_url) ||
+        "http://localhost:11434"
 
     # If the config URL already includes /v1, use it as-is for model_endpoint.
     # Otherwise append /v1 (backward compat with Ollama-style base URLs).
     uri = URI.parse(config_url)
+    host = uri.host || "localhost"
+    scheme = uri.scheme || "http"
     port_str = if uri.port, do: ":#{uri.port}", else: ""
-    base_url = "#{uri.scheme}://#{uri.host}#{port_str}"
+    base_url = "#{scheme}://#{host}#{port_str}"
 
     model_endpoint =
       if String.ends_with?(config_url, "/v1") do
@@ -380,12 +400,15 @@ defmodule BranchedLLM.Chat do
         base_url <> "/v1"
       end
 
-    %{base_url: base_url, model_endpoint: model_endpoint, health_endpoint: base_url <> "/api/tags"}
+    %{
+      base_url: base_url,
+      model_endpoint: model_endpoint,
+      health_endpoint: base_url <> "/api/tags"
+    }
   end
 
   # OpenTelemetry helpers
   # Compile-time branching: when :otel_tracer is loaded, spans are created.
-
   if Code.ensure_loaded?(OpenTelemetry.Tracer) do
     require OpenTelemetry.Tracer
 

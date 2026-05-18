@@ -7,8 +7,8 @@ defmodule BranchedLLM.ChatOrchestrator do
 
   ## Message Protocol
 
-  The orchestrator sends the following messages through the `on_event` function, typically
-  to the caller pid:
+  The orchestrator sends the following messages through the `on_event` function,
+  typically to the caller pid:
 
     * `{:llm_chunk, branch_id, chunk}` — A streaming text chunk from the LLM
     * `{:llm_end, branch_id, context_builder}` — The stream is complete; `context_builder` is a
@@ -23,6 +23,7 @@ defmodule BranchedLLM.ChatOrchestrator do
   ## Example
 
       caller_pid = self()
+
       params = %{
         message: "What is 2+2?",
         llm_context: context,
@@ -34,13 +35,15 @@ defmodule BranchedLLM.ChatOrchestrator do
       }
 
       BranchedLLM.ChatOrchestrator.run(params)
-
   """
+
   use Retry
   require Logger
 
+  alias BranchedLLM.LLM.StreamResult.{ContentResult, EmptyResult, ToolCallResult}
   alias BranchedLLM.LLMErrorFormatter
   alias BranchedLLM.ToolHandler
+
   alias ReqLLM.Context
   alias ReqLLM.StreamResponse.MetadataHandle
 
@@ -56,7 +59,6 @@ defmodule BranchedLLM.ChatOrchestrator do
 
   @doc """
   Starts the LLM request process in a separate task.
-
   The task communicates with the caller via messages defined in the module doc.
   """
   @spec run(llm_call_params()) :: {:ok, pid()}
@@ -79,11 +81,8 @@ defmodule BranchedLLM.ChatOrchestrator do
         end
 
       case result do
-        :ok ->
-          :ok
-
-        {:error, reason} ->
-          params.on_event.({:llm_error, params.branch_id, reason})
+        :ok -> :ok
+        {:error, reason} -> params.on_event.({:llm_error, params.branch_id, reason})
       end
     end)
   end
@@ -99,57 +98,53 @@ defmodule BranchedLLM.ChatOrchestrator do
          } = llm_call_params
        ) do
     case chat_mod.send_message_stream(message, llm_context, tools: llm_tools) do
-      {:ok, %ReqLLM.StreamResponse{} = stream_response, llm_context_builder, tool_calls} ->
-        handle_llm_stream_response(
-          stream_response,
-          llm_context_builder,
-          tool_calls,
-          llm_call_params
-        )
+      {:ok, %ContentResult{} = result} ->
+        handle_content_result(result, llm_call_params)
+
+      {:ok, %ToolCallResult{} = result} ->
+        handle_tool_call_result(result, llm_call_params)
+
+      {:ok, %EmptyResult{}} ->
+        {:error, "The AI did not return a response. Please try again."}
 
       {:error, reason} ->
         {:error, "Error: #{inspect(reason)}"}
     end
   rescue
-    exception ->
-      {:error, LLMErrorFormatter.format(exception)}
+    exception -> {:error, LLMErrorFormatter.format(exception)}
   end
 
-  @spec handle_llm_stream_response(
-          ReqLLM.StreamResponse.t(),
-          (String.t() -> ReqLLM.Context.t()),
-          list(),
-          llm_call_params()
-        ) :: :ok | {:error, String.t()}
-  defp handle_llm_stream_response(
-         stream_response,
-         llm_context_builder,
-         tool_calls,
+  @spec handle_content_result(ContentResult.t(), llm_call_params()) :: :ok | {:error, String.t()}
+  defp handle_content_result(
+         %ContentResult{stream: stream_response, context_builder: llm_context_builder},
          %{
            on_event: on_event_fn,
            tool_usage_counts: tool_usage_counts,
            branch_id: branch_id
-         } = llm_call_params
+         }
        ) do
-    if Enum.empty?(tool_calls) do
-      # No tool calls, process the stream normally
-      if process_stream(
-           stream_response,
-           on_event_fn,
-           llm_context_builder,
-           tool_usage_counts,
-           branch_id
-         ) do
-        :ok
-      else
-        {:error, "The AI did not return a response. Please try again."}
-      end
+    if process_stream(
+         stream_response,
+         on_event_fn,
+         llm_context_builder,
+         tool_usage_counts,
+         branch_id
+       ) do
+      :ok
     else
-      # Tool calls found, execute them and recursively call LLM with results
-      updated_llm_call_params = %{llm_call_params | llm_context: stream_response.context}
-      next_llm_call_params = handle_tool_call_execution(tool_calls, updated_llm_call_params)
-      process_llm_request(%{next_llm_call_params | message: ""})
+      {:error, "The AI did not return a response. Please try again."}
     end
+  end
+
+  @spec handle_tool_call_result(ToolCallResult.t(), llm_call_params()) ::
+          :ok | {:error, String.t()}
+  defp handle_tool_call_result(
+         %ToolCallResult{tool_calls: tool_calls, context: context},
+         llm_call_params
+       ) do
+    updated_llm_call_params = %{llm_call_params | llm_context: context}
+    next_llm_call_params = handle_tool_call_execution(tool_calls, updated_llm_call_params)
+    process_llm_request(%{next_llm_call_params | message: ""})
   end
 
   @spec handle_tool_call_execution(list(), llm_call_params()) :: llm_call_params()
@@ -232,7 +227,6 @@ defmodule BranchedLLM.ChatOrchestrator do
          branch_id
        ) do
     on_event_fn.({:update_tool_usage_counts, tool_usage_counts})
-
     start_time = :erlang.monotonic_time(:millisecond)
 
     sent_any_chunks =

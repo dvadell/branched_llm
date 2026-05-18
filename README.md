@@ -1,8 +1,4 @@
-# BranchedLLM
-
-[![Hex.pm](https://img.shields.io/hexpm/v/branched_llm.svg)](https://hex.pm/packages/branched_llm)
-[![HexDocs](https://img.shields.io/badge/hex-docs-blue.svg)](https://hexdocs.pm/branched_llm)
-[![License](https://img.shields.io/hexpm/l/branched_llm.svg)](https://hex.pm/packages/branched_llm)
+# BranchedLLM [![Hex.pm](https://img.shields.io/hexpm/v/branched_llm.svg)](https://hex.pm/packages/branched_llm) [![HexDocs](https://img.shields.io/badge/hex-docs-blue.svg)](https://hexdocs.pm/branched_llm) [![License](https://img.shields.io/hexpm/l/branched_llm.svg)](https://hex.pm/packages/branched_llm)
 
 A wrapper around [ReqLLM](https://hex.pm/packages/req_llm) that adds **branching conversations**, **tool execution**, and **async orchestration** on top of it.
 
@@ -12,11 +8,11 @@ BranchedLLM provides the conversation management layer — branching, message qu
 
 ## Features
 
-- ** Branching conversations** — Fork any conversation at any message to explore alternative responses. Each branch maintains its own context and message history independently.
-- ** Tool calling** — Built-in support for LLM tool use (via ReqLLM) with automatic detection, execution, and result injection. Includes retry limits and result caching.
-- ** Streaming responses** — Real-time token streaming via a clean message protocol between the orchestrator and your UI layer.
-- ** Domain-agnostic** — No knowledge of education, chat apps, or web frameworks. Pure data structures and well-defined message protocols.
-- ** Observable** — Optional OpenTelemetry spans and Telemetry events for monitoring.
+- **Branching conversations** — Fork any conversation at any message to explore alternative responses. Each branch maintains its own context and message history independently.
+- **Tool calling** — Built-in support for LLM tool use (via ReqLLM) with automatic detection, execution, and result injection. Includes retry limits and result caching.
+- **Streaming responses** — Real-time token streaming via a clean message protocol between the orchestrator and your UI layer.
+- **Domain-agnostic** — No knowledge of education, chat apps, or web frameworks. Pure data structures and well-defined message protocols.
+- **Observable** — Optional OpenTelemetry spans and Telemetry events for monitoring.
 
 ---
 
@@ -55,10 +51,9 @@ config :branched_llm,
   base_url: "http://localhost:11434"
 
 # ReqLLM configuration (OpenAI-compatible)
-config :req_llm,
-  openai: [
-    api_key: System.get_env("OPENAI_API_KEY")
-  ]
+config :req_llm, openai: [
+  api_key: System.get_env("OPENAI_API_KEY")
+]
 ```
 
 For tool result caching, the library defaults to `BranchedLLM.ToolCache.InMemory` (no-op). To use Ecto:
@@ -69,8 +64,7 @@ For tool result caching, the library defaults to `BranchedLLM.ToolCache.InMemory
 
 # config/config.exs
 config :branched_llm, :tool_cache, BranchedLLM.ToolCache.Ecto
-config :branched_llm, BranchedLLM.ToolCache,
-  repo: MyApp.Repo
+config :branched_llm, BranchedLLM.ToolCache, repo: MyApp.Repo
 ```
 
 ---
@@ -95,6 +89,8 @@ IO.puts(response)
 ### 3. Streaming with tools
 
 ```elixir
+alias BranchedLLM.LLM.StreamResult.{ContentResult, ToolCallResult}
+
 calculator_tool = ReqLLM.Tool.new!(
   name: "calculator",
   description: "Evaluates a mathematical expression",
@@ -110,13 +106,19 @@ calculator_tool = ReqLLM.Tool.new!(
   end
 )
 
-{:ok, stream_response, context_builder, tool_calls} =
-  Chat.send_message_stream("What is 123 * 456?", context, tools: [calculator_tool])
+{:ok, result} = Chat.send_message_stream("What is 123 * 456?", context, tools: [calculator_tool])
 
-# Consume the stream
-stream_response
-|> ReqLLM.StreamResponse.tokens()
-|> Enum.each(fn chunk -> IO.write(chunk) end)
+case result do
+  %ContentResult{stream: stream} ->
+    # The LLM is streaming text — iterate tokens
+    stream
+    |> ReqLLM.StreamResponse.tokens()
+    |> Enum.each(fn chunk -> IO.write(chunk) end)
+
+  %ToolCallResult{tool_calls: calls} ->
+    # The LLM is calling tools — handled automatically by the orchestrator
+    IO.puts("Tool calls: #{inspect(calls)}")
+end
 ```
 
 ### 4. Branching conversations
@@ -153,22 +155,34 @@ branched_chat = BranchedChat.switch_branch(branched_chat, "main")
 | `BranchedLLM.ToolHandler` | Orchestrates tool execution and context injection |
 | `BranchedLLM.ToolCache` | Ecto-based tool result caching |
 | `BranchedLLM.LLM.StreamParser` | Stream intent detection and tool call extraction |
+| `BranchedLLM.LLM.StreamResult` | Tagged-union result types (`ContentResult`, `ToolCallResult`, `EmptyResult`) |
 | `BranchedLLM.LLMErrorFormatter` | User-friendly error message formatting |
+
+### Stream Result Types
+
+`Chat.send_message_stream/3` returns a tagged union that clearly distinguishes the LLM's intent:
+
+| Struct | Meaning | Key fields |
+|---|---|---|
+| `%ContentResult{}` | LLM is streaming text | `stream`, `context_builder` |
+| `%ToolCallResult{}` | LLM is invoking tools | `tool_calls`, `context`, `context_builder` |
+| `%EmptyResult{}` | LLM returned nothing | `context_builder` |
+
+This eliminates the need for callers to inspect `tool_calls` lists or handle dummy streams — the intent is explicit in the type.
 
 ### Message Protocol
 
 The `ChatOrchestrator` communicates with the caller via a callback function (`on_event`):
 
 ```elixir
-{:llm_chunk, branch_id, chunk}        # Streaming text chunk
-{:llm_end, branch_id, context_builder} # Stream complete
-{:llm_status, branch_id, status}       # Status update ("Thinking...", "Using calculator...")
-{:llm_error, branch_id, error_message} # Error occurred
-{:update_tool_usage_counts, counts}    # Updated tool usage tracking
+{:llm_chunk, branch_id, chunk}          # Streaming text chunk
+{:llm_end, branch_id, context_builder}  # Stream complete
+{:llm_status, branch_id, status}        # Status update ("Thinking...", "Using calculator...")
+{:llm_error, branch_id, error_message}  # Error occurred
+{:update_tool_usage_counts, counts}     # Updated tool usage tracking
 ```
 
 This allows you to easily pipe events to processes (`send/2`), write directly to STDOUT, or integrate with any other side-effect.
-
 
 ---
 

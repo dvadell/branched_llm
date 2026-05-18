@@ -68,11 +68,13 @@ IO.puts(response)
 For real-time UI updates, use `send_message_stream/3`:
 
 ```elixir
-{:ok, stream_response, context_builder, tool_calls} =
+alias BranchedLLM.LLM.StreamResult.ContentResult
+
+{:ok, %ContentResult{stream: stream, context_builder: context_builder}} =
   Chat.send_message_stream("Tell me a story", context)
 
 # Consume the stream token by token
-stream_response
+stream
 |> ReqLLM.StreamResponse.tokens()
 |> Enum.each(fn chunk ->
   IO.write(chunk)
@@ -81,7 +83,7 @@ end)
 IO.puts("")
 
 # Build the final context with the assistant's complete response
-final_text = Enum.map_join(ReqLLM.StreamResponse.tokens(stream_response), & &1)
+final_text = Enum.map_join(ReqLLM.StreamResponse.tokens(stream), & &1)
 new_context = context_builder.(final_text)
 ```
 
@@ -202,8 +204,10 @@ calculator_tool = ReqLLM.Tool.new!(
 ```elixir
 context = Chat.new_context("You are a helpful assistant. Use the calculator when needed.")
 
-{:ok, stream_response, context_builder, tool_calls} =
+{:ok, result} =
   Chat.send_message_stream("What is 847 * 392?", context, tools: [calculator_tool])
+
+# result is either %ContentResult{} or %ToolCallResult{}
 
 # If the LLM decides to use the calculator:
 # 1. It returns a tool call instead of text
