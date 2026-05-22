@@ -361,10 +361,17 @@ Here's how the pieces fit together:
 │   │   ChatOrchestrator         │  Async   │
 │   │   + Retry + tool loop      │  orchest │
 │   └──────────┬─────────────────┘         │
-│              │                           │
-│   ┌──────────▼─────────────────┐         │
-│   │   Chat                     │  ReqLLM  │
-│   │   (ReqLLM-based)           │  wrapper │
+│             │                            │
+│  ┌──────────▼─────────────────┐          │
+│  │ ContextManager              │ Window   │
+│  │ + Token estimation          │ mgmt     │
+│  │ + Trim/prune/summarize      │          │
+│  └──────────┬─────────────────┘          │
+│             │                            │
+│  ┌──────────▼─────────────────┐          │
+│  │ Chat                       │ ReqLLM   │
+│  │ (ReqLLM-based)             │ wrapper  │
+│  └──────────┬─────────────────┘          │
 │   └──────────┬─────────────────┘         │
 ├──────────────┼───────────────────────────┤
 │              │    ReqLLM                  │
@@ -379,12 +386,124 @@ Here's how the pieces fit together:
 All LLM API communication goes through ReqLLM. BranchedLLM adds:
 - **Branching**: fork conversations at any point
 - **Orchestration**: async tasks, retries, message queuing
+- **Context management**: automatic token limit enforcement and trimming
 - **Tool loop**: detect → execute → inject → repeat
 - **Streaming protocol**: clean message protocol for your UI
 
 ---
 
-## Step 7: Error Handling
+## Step 7: Context Window Management
+
+As conversations grow, the accumulated messages can exceed the LLM's context window (e.g., 128k tokens for GPT-4), causing the API to return a 400 error. BranchedLLM provides `ContextManager` to prevent this.
+
+### Setting a Token Limit
+
+Configure a max token limit in `config/config.exs`:
+
+```elixir
+config :branched_llm,
+  max_tokens: 128_000
+```
+
+When the context exceeds this limit before an LLM call, the oldest non-system messages are automatically removed until it fits. System messages are always preserved.
+
+You can also set the limit per-call:
+
+```elixir
+Chat.send_message_stream("Hello!", context, max_tokens: 50_000)
+```
+
+Or disable trimming entirely (the default):
+
+```elixir
+Chat.send_message_stream("Hello!", context, max_tokens: :infinity)
+```
+
+### Custom Trimming Strategies
+
+The default strategy is **pruning**: removing the oldest conversation messages. For more sophisticated approaches like summarization, provide a `trim_callback`:
+
+```elixir
+defmodule MyApp.ContextTrimmer do
+  @doc """
+  Summarizes older messages into a single summary, keeping recent ones intact.
+  """
+  def summarize(context) do
+    system_msgs = Enum.filter(context.messages, fn msg -> msg.role == :system end)
+    conversation = Enum.reject(context.messages, fn msg -> msg.role == :system end)
+
+    # Split into "old" and "recent" messages
+    {old_msgs, recent_msgs} = Enum.split(conversation, -4)
+
+    summary_text = summarize_messages(old_msgs)
+    summary_msg = ReqLLM.Context.user("Previous conversation summary: #{summary_text}")
+
+    %{context | messages: system_msgs ++ [summary_msg] ++ recent_msgs}
+  end
+
+  defp summarize_messages(messages) do
+    # Call an LLM to summarize, or use a simple heuristic
+    messages
+    |> Enum.map(fn msg -> "#{msg.role}: #{extract_text(msg)}" end)
+    |> Enum.join("\n")
+  end
+
+  defp extract_text(msg) do
+    msg.content
+    |> Enum.filter(&(&1.type == :text))
+    |> Enum.map_join(& &1.text)
+  end
+end
+```
+
+Configure it globally:
+
+```elixir
+config :branched_llm,
+  max_tokens: 128_000,
+  trim_callback: {MyApp.ContextTrimmer, :summarize}
+```
+
+Or per-call:
+
+```elixir
+Chat.send_message_stream("Hello!", context,
+  max_tokens: 128_000,
+  trim_callback: &MyApp.ContextTrimmer.summarize/1
+)
+```
+
+If the callback result still exceeds `max_tokens`, the default pruning is applied as a fallback.
+
+### How It Works
+
+`ContextManager.trim/2` is called automatically at two points:
+
+1. **Before LLM calls** — `Chat.send_message_stream/3` trims the context before sending it to the LLM. The `context_builder` closure captures the *untrimmed* context, so `finish_ai_response` still stores the full conversation history.
+
+2. **After context rebuilds** — `BranchedChat.rebuild_context_from_messages/2` trims the rebuilt context after `branch_off` or `delete_message` operations.
+
+This means trimming only affects what the LLM sees — your UI still has access to the complete message history.
+
+### Token Estimation
+
+`ContextManager` estimates tokens using a character-based heuristic (~4 characters per token for English text). This is conservative and sufficient for preventing overflow:
+
+```elixir
+alias BranchedLLM.ContextManager
+
+context = Chat.new_context("You are a helpful assistant.")
+ContextManager.estimate_tokens(context)  #=> estimated token count
+
+# Adjust the heuristic for CJK text (~1.5-2 chars/token)
+ContextManager.estimate_tokens(context, chars_per_token: 2)
+```
+
+For precise token counting, provide a custom `trim_callback` that uses the model's tokenizer.
+
+---
+
+## Step 8: Error Handling
 
 BranchedLLM provides user-friendly error messages:
 

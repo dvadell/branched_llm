@@ -11,6 +11,7 @@ BranchedLLM provides the conversation management layer — branching, message qu
 - **Branching conversations** — Fork any conversation at any message to explore alternative responses. Each branch maintains its own context and message history independently.
 - **Tool calling** — Built-in support for LLM tool use (via ReqLLM) with automatic detection, execution, and result injection. Includes retry limits and result caching.
 - **Streaming responses** — Real-time token streaming via a clean message protocol between the orchestrator and your UI layer.
+- **Context window management** — Automatic context trimming to prevent token limit errors. Configurable max tokens and custom trim callbacks (e.g., summarization).
 - **Domain-agnostic** — No knowledge of education, chat apps, or web frameworks. Pure data structures and well-defined message protocols.
 - **Observable** — Optional OpenTelemetry spans and Telemetry events for monitoring.
 
@@ -51,9 +52,10 @@ config :branched_llm,
   base_url: "http://localhost:11434"
 
 # ReqLLM configuration (OpenAI-compatible)
-config :req_llm, openai: [
-  api_key: System.get_env("OPENAI_API_KEY")
-]
+config :req_llm,
+  openai: [
+    api_key: System.get_env("OPENAI_API_KEY")
+  ]
 ```
 
 For tool result caching, the library defaults to `BranchedLLM.ToolCache.InMemory` (no-op). To use Ecto:
@@ -65,6 +67,36 @@ For tool result caching, the library defaults to `BranchedLLM.ToolCache.InMemory
 # config/config.exs
 config :branched_llm, :tool_cache, BranchedLLM.ToolCache.Ecto
 config :branched_llm, BranchedLLM.ToolCache, repo: MyApp.Repo
+```
+
+### Context Window Configuration
+
+By default, conversations grow without limit, which can exceed the LLM's context window. Configure a max token limit to enable automatic trimming:
+
+```elixir
+config :branched_llm,
+  max_tokens: 128_000
+```
+
+When the context exceeds this limit, the oldest non-system messages are removed until it fits. System messages are always preserved.
+
+To use a custom trimming strategy (e.g., summarization instead of pruning):
+
+```elixir
+config :branched_llm,
+  max_tokens: 128_000,
+  trim_callback: {MyApp.ContextTrimmer, :summarize}
+```
+
+The callback receives a `ReqLLM.Context.t()` and must return a `ReqLLM.Context.t()`. If the callback result still exceeds `max_tokens`, the default pruning is applied as a fallback.
+
+You can also pass these options per-call:
+
+```elixir
+Chat.send_message_stream("Hello!", context,
+  max_tokens: 50_000,
+  trim_callback: &MyApp.summarize_context/1
+)
 ```
 
 ---
@@ -152,6 +184,7 @@ branched_chat = BranchedChat.switch_branch(branched_chat, "main")
 | `BranchedLLM.BranchedChat` | Tree-like conversation state with branching support |
 | `BranchedLLM.Chat` | ReqLLM-based chat implementation |
 | `BranchedLLM.ChatOrchestrator` | Async request orchestration with retry and tool call loops |
+| `BranchedLLM.ContextManager` | Context window limit enforcement and trimming |
 | `BranchedLLM.ToolHandler` | Orchestrates tool execution and context injection |
 | `BranchedLLM.ToolCache` | Ecto-based tool result caching |
 | `BranchedLLM.LLM.StreamParser` | Stream intent detection and tool call extraction |
@@ -170,16 +203,27 @@ branched_chat = BranchedChat.switch_branch(branched_chat, "main")
 
 This eliminates the need for callers to inspect `tool_calls` lists or handle dummy streams — the intent is explicit in the type.
 
+### Context Window Management
+
+The `ContextManager` prevents context overflow by:
+
+1. **Estimating tokens** from message content (~4 characters per token by default)
+2. **Trimming before LLM calls** in `Chat.send_message_stream/3` and `BranchedChat.rebuild_context_from_messages/2`
+3. **Preserving system messages** while removing the oldest conversation messages
+4. **Supporting custom callbacks** for strategies like summarization
+
+When trimming occurs, only the context sent to the LLM is trimmed. The full message history in `BranchedChat` is preserved — the `context_builder` closure captures the untrimmed context so that `finish_ai_response` stores the complete conversation.
+
 ### Message Protocol
 
 The `ChatOrchestrator` communicates with the caller via a callback function (`on_event`):
 
 ```elixir
-{:llm_chunk, branch_id, chunk}          # Streaming text chunk
-{:llm_end, branch_id, context_builder}  # Stream complete
-{:llm_status, branch_id, status}        # Status update ("Thinking...", "Using calculator...")
-{:llm_error, branch_id, error_message}  # Error occurred
-{:update_tool_usage_counts, counts}     # Updated tool usage tracking
+{:llm_chunk, branch_id, chunk}              # Streaming text chunk
+{:llm_end, branch_id, context_builder}      # Stream complete
+{:llm_status, branch_id, status}            # Status update ("Thinking...", "Using calculator...")
+{:llm_error, branch_id, error_message}      # Error occurred
+{:update_tool_usage_counts, counts}          # Updated tool usage tracking
 ```
 
 This allows you to easily pipe events to processes (`send/2`), write directly to STDOUT, or integrate with any other side-effect.

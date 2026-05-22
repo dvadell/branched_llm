@@ -244,7 +244,82 @@ LLMErrorFormatter.format(rate_error)
 
 ---
 
-## Part 8: Putting It All Together — A Mini-App
+## Part 8: Context Window Management
+
+Long conversations can exceed the LLM's token limit (e.g., 128k for GPT-4), causing API errors. `ContextManager` prevents this by automatically trimming the context.
+
+### Estimating Token Count
+
+```elixir
+alias BranchedLLM.ContextManager
+
+context = Chat.new_context("You are a helpful assistant.")
+
+# Estimate how many tokens the context currently uses
+ContextManager.estimate_tokens(context)
+#=> 7
+
+# Adjust the heuristic for CJK text (~1.5-2 chars/token)
+ContextManager.estimate_tokens(context, chars_per_token: 2)
+#=> 14
+```
+
+### Automatic Trimming
+
+Configure a max token limit and trimming happens automatically before LLM calls:
+
+```elixir
+# In config/config.exs
+config :branched_llm, max_tokens: 128_000
+
+# Or per-call:
+Chat.send_message_stream("Hello!", context, max_tokens: 50_000)
+```
+
+### Manual Trimming
+
+You can also call `trim/2` directly to inspect or control trimming:
+
+```elixir
+# Build a large context
+context = Chat.new_context("You are a helpful assistant.")
+context = ReqLLM.Context.append(context, ReqLLM.Context.user("First question"))
+context = ReqLLM.Context.append(context, ReqLLM.Context.assistant("First answer"))
+context = ReqLLM.Context.append(context, ReqLLM.Context.user("Second question"))
+
+# Trim to fit within a small limit
+{trimmed, was_trimmed} = ContextManager.trim(context, max_tokens: 5)
+was_trimmed
+#=> true
+
+# System messages are always preserved
+Enum.filter(trimmed.messages, fn msg -> msg.role == :system end)
+#=> [%ReqLLM.Message{role: :system, ...}]
+
+# The most recent messages are kept
+List.last(trimmed.messages).role
+#=> :user
+```
+
+### Custom Trim Callback
+
+For summarization instead of pruning, provide a `trim_callback`:
+
+```elixir
+# A simple callback that keeps only the last user message
+my_trimmer = fn ctx ->
+  system = Enum.filter(ctx.messages, fn msg -> msg.role == :system end)
+  users = Enum.filter(ctx.messages, fn msg -> msg.role == :user end)
+  last_user = List.last(users)
+  %{ctx | messages: system ++ if(last_user, do: [last_user], else: [])}
+end
+
+{result, true} = ContextManager.trim(context, max_tokens: 2, trim_callback: my_trimmer)
+```
+
+---
+
+## Part 9: Putting It All Together — A Mini-App
 
 You can run the built-in sample chat directly to see everything in action:
 
@@ -296,6 +371,7 @@ end
 | Branching | `BranchedLLM.BranchedChat` | `branch_off/2`, `switch_branch/2` |
 | Chat | `BranchedLLM.Chat` | `send_message/3`, `send_message_stream/3` |
 | Orchestration | `BranchedLLM.ChatOrchestrator` | `run/1` |
+| Context Window | `BranchedLLM.ContextManager` | `trim/2`, `estimate_tokens/2` |
 | Errors | `BranchedLLM.LLMErrorFormatter` | `format/1` |
 | Caching | `BranchedLLM.ToolCache` | `get_result/2`, `save_result/3` |
 
