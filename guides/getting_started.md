@@ -419,61 +419,71 @@ Or disable trimming entirely (the default):
 Chat.send_message_stream("Hello!", context, max_tokens: :infinity)
 ```
 
-### Custom Trimming Strategies
+### Built-in Strategies
 
-The default strategy is **pruning**: removing the oldest conversation messages. For more sophisticated approaches like summarization, provide a `trim_callback`:
+BranchedLLM ships four strategies. Configure them using a `{module, function, opts}` tuple:
 
-```elixir
-defmodule MyApp.ContextTrimmer do
-  @doc """
-  Summarizes older messages into a single summary, keeping recent ones intact.
-  """
-  def summarize(context) do
-    system_msgs = Enum.filter(context.messages, fn msg -> msg.role == :system end)
-    conversation = Enum.reject(context.messages, fn msg -> msg.role == :system end)
-
-    # Split into "old" and "recent" messages
-    {old_msgs, recent_msgs} = Enum.split(conversation, -4)
-
-    summary_text = summarize_messages(old_msgs)
-    summary_msg = ReqLLM.Context.user("Previous conversation summary: #{summary_text}")
-
-    %{context | messages: system_msgs ++ [summary_msg] ++ recent_msgs}
-  end
-
-  defp summarize_messages(messages) do
-    # Call an LLM to summarize, or use a simple heuristic
-    messages
-    |> Enum.map(fn msg -> "#{msg.role}: #{extract_text(msg)}" end)
-    |> Enum.join("\n")
-  end
-
-  defp extract_text(msg) do
-    msg.content
-    |> Enum.filter(&(&1.type == :text))
-    |> Enum.map_join(& &1.text)
-  end
-end
-```
-
-Configure it globally:
+| Strategy | Description | Key option |
+|---|---|---|
+| `Strategy.Prune` | Drop oldest non-system messages until context fits (default) | — |
+| `Strategy.SlidingWindow` | Keep only the last N messages | `keep: N` |
+| `Strategy.Percentage` | Keep the last X% of conversation tokens | `retain: 0.7` |
+| `Strategy.Summarize` | Condense older messages into a summary | `recent_count: 4` |
 
 ```elixir
+# Keep last 20 conversation messages
 config :branched_llm,
   max_tokens: 128_000,
-  trim_callback: {MyApp.ContextTrimmer, :summarize}
+  trim_callback: {BranchedLLM.ContextManager.Strategy.SlidingWindow, :trim, [keep: 20]}
+
+# Keep last 70% of conversation tokens
+config :branched_llm,
+  max_tokens: 128_000,
+  trim_callback: {BranchedLLM.ContextManager.Strategy.Percentage, :trim, [retain: 0.7]}
+
+# Summarize older messages (keep last 4 intact)
+config :branched_llm,
+  max_tokens: 128_000,
+  trim_callback: {BranchedLLM.ContextManager.Strategy.Summarize, :trim, [recent_count: 4]}
 ```
 
 Or per-call:
 
 ```elixir
 Chat.send_message_stream("Hello!", context,
-  max_tokens: 128_000,
-  trim_callback: &MyApp.ContextTrimmer.summarize/1
+  max_tokens: 50_000,
+  trim_callback: {BranchedLLM.ContextManager.Strategy.SlidingWindow, :trim, [keep: 10]}
 )
 ```
 
-If the callback result still exceeds `max_tokens`, the default pruning is applied as a fallback.
+If the strategy result still exceeds `max_tokens`, `Strategy.Prune` is applied as a fallback.
+
+### Custom Strategies
+
+Implement the `BranchedLLM.ContextManager.Strategy` behaviour:
+
+```elixir
+defmodule MyApp.Strategy.KeepRecent do
+  @behaviour BranchedLLM.ContextManager.Strategy
+
+  @impl true
+  def trim(context, opts) do
+    keep = Keyword.get(opts, :keep, 10)
+    system = Enum.filter(context.messages, fn msg -> msg.role == :system end)
+    conversation = Enum.reject(context.messages, fn msg -> msg.role == :system end)
+    recent = Enum.take(conversation, -keep)
+    %{context | messages: system ++ recent}
+  end
+end
+```
+
+Then configure it:
+
+```elixir
+config :branched_llm,
+  max_tokens: 128_000,
+  trim_callback: {MyApp.Strategy.KeepRecent, :trim, [keep: 20]}
+```
 
 ### How It Works
 

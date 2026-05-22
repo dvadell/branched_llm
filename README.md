@@ -74,29 +74,70 @@ config :branched_llm, BranchedLLM.ToolCache, repo: MyApp.Repo
 By default, conversations grow without limit, which can exceed the LLM's context window. Configure a max token limit to enable automatic trimming:
 
 ```elixir
-config :branched_llm,
-  max_tokens: 128_000
+config :branched_llm, max_tokens: 128_000
 ```
 
-When the context exceeds this limit, the oldest non-system messages are removed until it fits. System messages are always preserved.
+When the context exceeds this limit, the configured strategy is invoked before the LLM call. System messages are always preserved.
 
-To use a custom trimming strategy (e.g., summarization instead of pruning):
+#### Built-in Strategies
+
+| Strategy | Description | Key option |
+|---|---|---|
+| `Strategy.Prune` | Drop oldest non-system messages until context fits (default) | — |
+| `Strategy.SlidingWindow` | Keep only the last N messages | `keep: N` |
+| `Strategy.Percentage` | Keep the last X% of conversation tokens | `retain: 0.7` |
+| `Strategy.Summarize` | Condense older messages into a summary | `recent_count: 4` |
+
+Configure a strategy using a `{module, function, opts}` tuple:
 
 ```elixir
+# SlidingWindow: keep last 20 messages
 config :branched_llm,
   max_tokens: 128_000,
-  trim_callback: {MyApp.ContextTrimmer, :summarize}
+  trim_callback: {BranchedLLM.ContextManager.Strategy.SlidingWindow, :trim, [keep: 20]}
+
+# Percentage: keep last 70% of tokens
+config :branched_llm,
+  max_tokens: 128_000,
+  trim_callback: {BranchedLLM.ContextManager.Strategy.Percentage, :trim, [retain: 0.7]}
 ```
 
-The callback receives a `ReqLLM.Context.t()` and must return a `ReqLLM.Context.t()`. If the callback result still exceeds `max_tokens`, the default pruning is applied as a fallback.
-
-You can also pass these options per-call:
+Or pass per-call:
 
 ```elixir
 Chat.send_message_stream("Hello!", context,
   max_tokens: 50_000,
-  trim_callback: &MyApp.summarize_context/1
+  trim_callback: {BranchedLLM.ContextManager.Strategy.SlidingWindow, :trim, [keep: 10]}
 )
+```
+
+If the strategy result still exceeds `max_tokens`, `Strategy.Prune` is applied as a fallback.
+
+#### Custom Strategies
+
+Implement the `BranchedLLM.ContextManager.Strategy` behaviour:
+
+```elixir
+defmodule MyApp.Strategy.KeepRecent do
+  @behaviour BranchedLLM.ContextManager.Strategy
+
+  @impl true
+  def trim(context, opts) do
+    keep = Keyword.get(opts, :keep, 10)
+    system = Enum.filter(context.messages, fn msg -> msg.role == :system end)
+    conversation = Enum.reject(context.messages, fn msg -> msg.role == :system end)
+    recent = Enum.take(conversation, -keep)
+    %{context | messages: system ++ recent}
+  end
+end
+```
+
+Then configure it:
+
+```elixir
+config :branched_llm,
+  max_tokens: 128_000,
+  trim_callback: {MyApp.Strategy.KeepRecent, :trim, [keep: 20]}
 ```
 
 ---
@@ -185,6 +226,11 @@ branched_chat = BranchedChat.switch_branch(branched_chat, "main")
 | `BranchedLLM.Chat` | ReqLLM-based chat implementation |
 | `BranchedLLM.ChatOrchestrator` | Async request orchestration with retry and tool call loops |
 | `BranchedLLM.ContextManager` | Context window limit enforcement and trimming |
+| `BranchedLLM.ContextManager.Strategy` | Behaviour for pluggable trim strategies |
+| `BranchedLLM.ContextManager.Strategy.Prune` | Drop oldest messages (default fallback) |
+| `BranchedLLM.ContextManager.Strategy.SlidingWindow` | Keep last N messages |
+| `BranchedLLM.ContextManager.Strategy.Percentage` | Keep last X% of tokens |
+| `BranchedLLM.ContextManager.Strategy.Summarize` | Summarize older messages |
 | `BranchedLLM.ToolHandler` | Orchestrates tool execution and context injection |
 | `BranchedLLM.ToolCache` | Ecto-based tool result caching |
 | `BranchedLLM.LLM.StreamParser` | Stream intent detection and tool call extraction |
@@ -210,9 +256,11 @@ The `ContextManager` prevents context overflow by:
 1. **Estimating tokens** from message content (~4 characters per token by default)
 2. **Trimming before LLM calls** in `Chat.send_message_stream/3` and `BranchedChat.rebuild_context_from_messages/2`
 3. **Preserving system messages** while removing the oldest conversation messages
-4. **Supporting custom callbacks** for strategies like summarization
+4. **Supporting pluggable strategies** via the `Strategy` behaviour — four built-in strategies are provided
 
 When trimming occurs, only the context sent to the LLM is trimmed. The full message history in `BranchedChat` is preserved — the `context_builder` closure captures the untrimmed context so that `finish_ai_response` stores the complete conversation.
+
+Trimming only runs when the estimated token count **exceeds** `max_tokens`. By default, `max_tokens` is `:infinity` — no trimming occurs unless you configure it.
 
 ### Message Protocol
 

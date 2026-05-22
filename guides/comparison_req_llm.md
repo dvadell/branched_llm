@@ -62,7 +62,7 @@ In `ReqLLM`, you must manually track token counts and trim messages before they 
 * **Token estimation** — Approximates token count from message content.
 * **Automatic trimming** — Before each LLM call, messages are trimmed if they exceed the configured `max_tokens` limit.
 * **System message preservation** — System prompts are never removed.
-* **Custom callbacks** — Replace the default pruning strategy with summarization or any other approach.
+* **Pluggable strategies** — Four built-in strategies (Prune, SlidingWindow, Percentage, Summarize) plus a behaviour for custom strategies.
 
 ```elixir
 # ReqLLM: You manage this yourself
@@ -70,8 +70,11 @@ messages = Enum.take(messages, -50)  # hope 50 messages fit...
 
 # BranchedLLM: Automatic, configurable, extensible
 config :branched_llm, max_tokens: 128_000
-# Or per-call:
-Chat.send_message_stream("Hello!", context, max_tokens: 50_000)
+
+# Or with a specific strategy:
+config :branched_llm,
+  max_tokens: 128_000,
+  trim_callback: {BranchedLLM.ContextManager.Strategy.SlidingWindow, :trim, [keep: 20]}
 ```
 
 ---

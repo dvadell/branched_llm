@@ -3,6 +3,48 @@ defmodule BranchedLLM.ContextManagerTest do
 
   alias BranchedLLM.ContextManager
   alias ReqLLM.Context
+  alias ReqLLM.Message
+
+  # Helper: build a context with messages that have raw binary content
+  # (bypasses Context.user/assistant which always creates ContentPart lists)
+  defp context_with_binary_content do
+    %Context{
+      messages: [
+        %Message{role: :system, content: [%Message.ContentPart{type: :text, text: "System"}]},
+        %Message{role: :user, content: "Binary user message here"},
+        %Message{role: :assistant, content: "Binary assistant reply"}
+      ]
+    }
+  end
+
+  # Helper: build a context with a message that has nil content
+  defp context_with_nil_content do
+    %Context{
+      messages: [
+        %Message{role: :system, content: [%Message.ContentPart{type: :text, text: "System"}]},
+        struct(Message, %{role: :user, content: nil})
+      ]
+    }
+  end
+
+  # Helper: build a context with messages containing non-text ContentParts (e.g., image)
+  defp context_with_mixed_content_parts do
+    %Context{
+      messages: [
+        %Message{role: :system, content: [%Message.ContentPart{type: :text, text: "System"}]},
+        %Message{
+          role: :user,
+          content: [
+            %Message.ContentPart{type: :text, text: "What is in this image?"},
+            %Message.ContentPart{
+              type: :image_url,
+              url: "https://example.com/img.png"
+            }
+          ]
+        }
+      ]
+    }
+  end
 
   describe "estimate_tokens/2" do
     test "returns 0 for empty context" do
@@ -11,13 +53,11 @@ defmodule BranchedLLM.ContextManagerTest do
     end
 
     test "estimates tokens for a simple message" do
-      # "Hello!!" = 7 bytes / 4 chars_per_token = 1 token (integer division)
       context = Context.new([Context.user("Hello!!")])
       assert ContextManager.estimate_tokens(context) == 1
     end
 
     test "estimates tokens across multiple messages" do
-      # "You are helpful" = 15 chars, "Hello!!" = 7 chars => 22 chars / 4 = 5 tokens
       context =
         Context.new([
           Context.system("You are helpful"),
@@ -28,7 +68,6 @@ defmodule BranchedLLM.ContextManagerTest do
     end
 
     test "respects custom chars_per_token" do
-      # "Hello!!" = 7 bytes / 2 chars_per_token = 3 tokens (integer division)
       context = Context.new([Context.user("Hello!!")])
       assert ContextManager.estimate_tokens(context, chars_per_token: 2) == 3
     end
@@ -36,6 +75,26 @@ defmodule BranchedLLM.ContextManagerTest do
     test "handles empty content gracefully" do
       context = Context.new([Context.user("")])
       assert ContextManager.estimate_tokens(context) == 0
+    end
+
+    test "handles messages with binary (non-list) content" do
+      context = context_with_binary_content()
+
+      # "System" (7) + "Binary user message here" (24) + "Binary assistant reply" (23) = 54 / 4 = 13
+      assert ContextManager.estimate_tokens(context) == 13
+    end
+
+    test "handles messages with nil content" do
+      context = context_with_nil_content()
+      # "System" (7) + nil (0) = 7 / 4 = 1
+      assert ContextManager.estimate_tokens(context) == 1
+    end
+
+    test "handles messages with mixed text and image content parts" do
+      context = context_with_mixed_content_parts()
+      # "System" (7) + "What is in this image?" (22) = 29 / 4 = 7
+      # (image_url ContentPart is skipped — only text parts are counted)
+      assert ContextManager.estimate_tokens(context) == 7
     end
   end
 
@@ -51,7 +110,6 @@ defmodule BranchedLLM.ContextManagerTest do
     test "returns context unchanged when within token limit" do
       context = Context.new([Context.system("Sys"), Context.user("Hi")])
 
-      # Well within limit
       {result, was_trimmed} = ContextManager.trim(context, max_tokens: 100)
       assert result == context
       refute was_trimmed
@@ -71,10 +129,9 @@ defmodule BranchedLLM.ContextManagerTest do
       {result, was_trimmed} = ContextManager.trim(context, max_tokens: 5)
 
       assert was_trimmed
-      # System messages must be preserved
+
       system_msgs = Enum.filter(result.messages, fn msg -> msg.role == :system end)
       assert length(system_msgs) == 1
-      # Most recent messages should be kept
       assert length(result.messages) < length(context.messages)
     end
 
@@ -105,7 +162,6 @@ defmodule BranchedLLM.ContextManagerTest do
       {result, was_trimmed} = ContextManager.trim(context, max_tokens: 4)
 
       assert was_trimmed
-      # The newest user message should be retained
       last_msg = List.last(result.messages)
       assert last_msg.role == :user
     end
@@ -117,7 +173,6 @@ defmodule BranchedLLM.ContextManagerTest do
           Context.user("A very long question that should be summarized")
         ])
 
-      # Custom callback that keeps only system + last user message
       callback = fn ctx ->
         system_msgs = Enum.filter(ctx.messages, fn msg -> msg.role == :system end)
         user_msgs = Enum.filter(ctx.messages, fn msg -> msg.role == :user end)
@@ -139,14 +194,13 @@ defmodule BranchedLLM.ContextManagerTest do
           Context.user("This is a very long question that exceeds the token limit by far")
         ])
 
-      # Callback that does nothing (returns context as-is)
       no_op_callback = fn ctx -> ctx end
 
       {result, was_trimmed} =
         ContextManager.trim(context, max_tokens: 2, trim_callback: no_op_callback)
 
       assert was_trimmed
-      # Should have been pruned after the callback failed to reduce size
+
       system_msgs = Enum.filter(result.messages, fn msg -> msg.role == :system end)
       assert length(system_msgs) == 1
     end
@@ -159,18 +213,34 @@ defmodule BranchedLLM.ContextManagerTest do
         ])
 
       {result, was_trimmed} =
-        ContextManager.trim(context,
-          max_tokens: 2,
-          trim_callback: {__MODULE__, :noop_trim}
-        )
+        ContextManager.trim(context, max_tokens: 2, trim_callback: {__MODULE__, :noop_trim})
 
       assert was_trimmed
-      # The noop callback returns context as-is, so default pruning kicks in
+
       system_msgs = Enum.filter(result.messages, fn msg -> msg.role == :system end)
       assert length(system_msgs) == 1
     end
 
-    test "rescues from failing trim_callback" do
+    test "handles trim_callback with {module, function, opts} tuple" do
+      context =
+        Context.new([
+          Context.system("System"),
+          Context.user("Hello world question")
+        ])
+
+      {result, was_trimmed} =
+        ContextManager.trim(context,
+          max_tokens: 2,
+          trim_callback: {__MODULE__, :noop_trim_with_opts, [extra: true]}
+        )
+
+      assert was_trimmed
+
+      system_msgs = Enum.filter(result.messages, fn msg -> msg.role == :system end)
+      assert length(system_msgs) == 1
+    end
+
+    test "rescues from failing 1-arity function callback" do
       context =
         Context.new([
           Context.system("System"),
@@ -183,9 +253,68 @@ defmodule BranchedLLM.ContextManagerTest do
         ContextManager.trim(context, max_tokens: 1, trim_callback: bad_callback)
 
       assert was_trimmed
-      # Falls back to default pruning after callback raises
+
       system_msgs = Enum.filter(result.messages, fn msg -> msg.role == :system end)
       assert length(system_msgs) == 1
+    end
+
+    test "rescues from failing {module, function} callback" do
+      context =
+        Context.new([
+          Context.system("System"),
+          Context.user("Hello")
+        ])
+
+      {result, was_trimmed} =
+        ContextManager.trim(context,
+          max_tokens: 1,
+          trim_callback: {__MODULE__, :failing_trim}
+        )
+
+      assert was_trimmed
+
+      system_msgs = Enum.filter(result.messages, fn msg -> msg.role == :system end)
+      assert length(system_msgs) == 1
+    end
+
+    test "rescues from failing {module, function, opts} callback" do
+      context =
+        Context.new([
+          Context.system("System"),
+          Context.user("Hello")
+        ])
+
+      {result, was_trimmed} =
+        ContextManager.trim(context,
+          max_tokens: 1,
+          trim_callback: {__MODULE__, :failing_trim_with_opts, [boom: true]}
+        )
+
+      assert was_trimmed
+
+      system_msgs = Enum.filter(result.messages, fn msg -> msg.role == :system end)
+      assert length(system_msgs) == 1
+    end
+
+    test "trims context with binary content messages" do
+      context = context_with_binary_content()
+
+      {result, was_trimmed} = ContextManager.trim(context, max_tokens: 3)
+
+      assert was_trimmed
+
+      system_msgs = Enum.filter(result.messages, fn msg -> msg.role == :system end)
+      assert length(system_msgs) == 1
+    end
+
+    test "trims context with nil content messages" do
+      context = context_with_nil_content()
+
+      {_result, was_trimmed} = ContextManager.trim(context, max_tokens: 1)
+
+      # Even with nil content (0 bytes), max_tokens: 1 is very tight
+      # The system message alone may exceed 1 token
+      assert is_boolean(was_trimmed)
     end
   end
 
@@ -234,7 +363,14 @@ defmodule BranchedLLM.ContextManagerTest do
 
     test "resolves {module, function} tuple from explicit opts" do
       result = ContextManager.resolve_trim_callback(trim_callback: {__MODULE__, :noop_trim})
-      assert is_function(result, 1)
+      assert result == {__MODULE__, :noop_trim}
+    end
+
+    test "resolves {module, function, opts} tuple from explicit opts" do
+      result =
+        ContextManager.resolve_trim_callback(trim_callback: {__MODULE__, :noop_trim, [keep: 5]})
+
+      assert result == {__MODULE__, :noop_trim, [keep: 5]}
     end
 
     test "resolves {module, function} tuple from app config" do
@@ -242,7 +378,36 @@ defmodule BranchedLLM.ContextManagerTest do
       Application.put_env(:branched_llm, :trim_callback, {__MODULE__, :noop_trim})
 
       result = ContextManager.resolve_trim_callback([])
-      assert is_function(result, 1)
+      assert result == {__MODULE__, :noop_trim}
+
+      if original do
+        Application.put_env(:branched_llm, :trim_callback, original)
+      else
+        Application.delete_env(:branched_llm, :trim_callback)
+      end
+    end
+
+    test "resolves {module, function, opts} tuple from app config" do
+      original = Application.get_env(:branched_llm, :trim_callback)
+      Application.put_env(:branched_llm, :trim_callback, {__MODULE__, :noop_trim, [keep: 5]})
+
+      result = ContextManager.resolve_trim_callback([])
+      assert result == {__MODULE__, :noop_trim, [keep: 5]}
+
+      if original do
+        Application.put_env(:branched_llm, :trim_callback, original)
+      else
+        Application.delete_env(:branched_llm, :trim_callback)
+      end
+    end
+
+    test "resolves 1-arity function from app config" do
+      original = Application.get_env(:branched_llm, :trim_callback)
+      fun = fn ctx -> ctx end
+      Application.put_env(:branched_llm, :trim_callback, fun)
+
+      result = ContextManager.resolve_trim_callback([])
+      assert result == fun
 
       if original do
         Application.put_env(:branched_llm, :trim_callback, original)
@@ -252,6 +417,9 @@ defmodule BranchedLLM.ContextManagerTest do
     end
   end
 
-  # Test helper for {module, function} callback resolution
-  def noop_trim(ctx), do: ctx
+  # Test helpers for {module, function} callback resolution
+  def noop_trim(ctx, _opts), do: ctx
+  def noop_trim_with_opts(ctx, _opts), do: ctx
+  def failing_trim(_ctx, _opts), do: raise("2-tuple failure")
+  def failing_trim_with_opts(_ctx, _opts), do: raise("3-tuple failure")
 end

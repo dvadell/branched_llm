@@ -301,20 +301,70 @@ List.last(trimmed.messages).role
 #=> :user
 ```
 
-### Custom Trim Callback
+### Built-in Strategies
 
-For summarization instead of pruning, provide a `trim_callback`:
+BranchedLLM ships four strategies under `BranchedLLM.ContextManager.Strategy.*`:
 
 ```elixir
-# A simple callback that keeps only the last user message
-my_trimmer = fn ctx ->
-  system = Enum.filter(ctx.messages, fn msg -> msg.role == :system end)
-  users = Enum.filter(ctx.messages, fn msg -> msg.role == :user end)
-  last_user = List.last(users)
-  %{ctx | messages: system ++ if(last_user, do: [last_user], else: [])}
-end
+alias BranchedLLM.ContextManager.Strategy
 
-{result, true} = ContextManager.trim(context, max_tokens: 2, trim_callback: my_trimmer)
+# Prune: drop oldest messages until context fits (default fallback)
+trimmed = Strategy.Prune.trim(context, max_tokens: 5)
+
+# SlidingWindow: keep only the last N conversation messages
+trimmed = Strategy.SlidingWindow.trim(context, keep: 4)
+
+# Percentage: keep the last 70% of conversation tokens
+trimmed = Strategy.Percentage.trim(context, retain: 0.7)
+
+# Summarize: condense older messages into a single summary
+trimmed = Strategy.Summarize.trim(context, recent_count: 4)
+```
+
+Configure a strategy globally:
+
+```elixir
+# In config/config.exs
+config :branched_llm,
+  max_tokens: 128_000,
+  trim_callback: {BranchedLLM.ContextManager.Strategy.SlidingWindow, :trim, [keep: 20]}
+```
+
+Or per-call:
+
+```elixir
+ContextManager.trim(context,
+  max_tokens: 128_000,
+  trim_callback: {Strategy.SlidingWindow, :trim, [keep: 10]}
+)
+```
+
+### Custom Strategy
+
+Implement the `Strategy` behaviour for your own trimming logic:
+
+```elixir
+defmodule MyApp.Strategy.KeepRecent do
+  @behaviour BranchedLLM.ContextManager.Strategy
+
+  @impl true
+  def trim(context, opts) do
+    keep = Keyword.get(opts, :keep, 10)
+    system = Enum.filter(context.messages, fn msg -> msg.role == :system end)
+    conversation = Enum.reject(context.messages, fn msg -> msg.role == :system end)
+    recent = Enum.take(conversation, -keep)
+    %{context | messages: system ++ recent}
+  end
+end
+```
+
+Then use it:
+
+```elixir
+ContextManager.trim(context,
+  max_tokens: 128_000,
+  trim_callback: {MyApp.Strategy.KeepRecent, :trim, [keep: 20]}
+)
 ```
 
 ---
