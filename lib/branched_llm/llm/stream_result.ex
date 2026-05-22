@@ -1,6 +1,6 @@
 defmodule BranchedLLM.LLM.StreamResult do
   @moduledoc """
-  Tagged-union result types for `send_message_stream/3`.
+  Tagged-union result types for `send_message_stream/2`.
 
   Each variant clearly distinguishes the LLM's intent — content, tool call,
   empty, or error — eliminating the need for callers to inspect `tool_calls`
@@ -36,11 +36,10 @@ defmodule BranchedLLM.LLM.StreamResult do
     `StreamResponse` that can be iterated for token-by-token output.
     """
 
-    defstruct [:stream, :context_builder]
+    defstruct [:stream]
 
     @type t :: %__MODULE__{
-            stream: StreamResponse.t(),
-            context_builder: (String.t() -> Context.t())
+            stream: StreamResponse.t()
           }
   end
 
@@ -51,12 +50,11 @@ defmodule BranchedLLM.LLM.StreamResult do
     append tool-call messages before the recursive LLM call).
     """
 
-    defstruct [:tool_calls, :context, :context_builder]
+    defstruct [:tool_calls, :context]
 
     @type t :: %__MODULE__{
             tool_calls: list(ToolCall.t()),
-            context: Context.t(),
-            context_builder: (String.t() -> Context.t())
+            context: Context.t()
           }
   end
 
@@ -65,9 +63,9 @@ defmodule BranchedLLM.LLM.StreamResult do
     The LLM returned neither content nor tool calls (empty stream).
     """
 
-    defstruct [:context_builder]
+    defstruct []
 
-    @type t :: %__MODULE__{context_builder: (String.t() -> Context.t())}
+    @type t :: %__MODULE__{}
   end
 
   defmodule ErrorResult do
@@ -75,12 +73,10 @@ defmodule BranchedLLM.LLM.StreamResult do
     The LLM call failed. The `reason` field carries the error term.
     """
 
-    defstruct [:reason, :context_builder]
+    defstruct [:reason]
 
-    @type t :: %__MODULE__{reason: term(), context_builder: (String.t() -> Context.t()) | nil}
+    @type t :: %__MODULE__{reason: term()}
   end
-
-  @type context_builder :: (String.t() -> Context.t())
 
   @type t ::
           BranchedLLM.LLM.StreamResult.ContentResult.t()

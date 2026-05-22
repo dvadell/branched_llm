@@ -11,8 +11,8 @@ defmodule BranchedLLM.ChatOrchestrator do
   typically to the caller pid:
 
     * `{:llm_chunk, branch_id, chunk}` — A streaming text chunk from the LLM
-    * `{:llm_end, branch_id, context_builder}` — The stream is complete; `context_builder` is a
-      function `(String.t() -> ReqLLM.Context.t())` that builds the final context
+    * `{:llm_end, branch_id, full_text}` — The stream is complete; `full_text` is the full
+      accumulated text of the assistant's response
     * `{:llm_status, branch_id, status}` — A status update (e.g., "Thinking...", "Using calculator...")
     * `{:llm_error, branch_id, error_message}` — An error occurred during the LLM request
     * `{:update_tool_usage_counts, counts}` — Updated tool usage counts for the caller to track
@@ -25,7 +25,6 @@ defmodule BranchedLLM.ChatOrchestrator do
       caller_pid = self()
 
       params = %{
-        message: "What is 2+2?",
         llm_context: context,
         on_event: fn event -> send(caller_pid, event) end,
         llm_tools: [calculator_tool],
@@ -48,7 +47,6 @@ defmodule BranchedLLM.ChatOrchestrator do
   alias ReqLLM.StreamResponse.MetadataHandle
 
   @type llm_call_params :: %{
-          message: String.t(),
           llm_context: ReqLLM.Context.t(),
           on_event: fun(),
           llm_tools: list(),
@@ -90,14 +88,13 @@ defmodule BranchedLLM.ChatOrchestrator do
   @spec process_llm_request(llm_call_params()) :: :ok | {:error, String.t()}
   defp process_llm_request(
          %{
-           message: message,
            llm_context: llm_context,
            on_event: _event_fn,
            llm_tools: llm_tools,
            chat_mod: chat_mod
          } = llm_call_params
        ) do
-    case chat_mod.send_message_stream(message, llm_context, tools: llm_tools) do
+    case chat_mod.send_message_stream(llm_context, tools: llm_tools) do
       {:ok, %ContentResult{} = result} ->
         handle_content_result(result, llm_call_params)
 
@@ -116,7 +113,7 @@ defmodule BranchedLLM.ChatOrchestrator do
 
   @spec handle_content_result(ContentResult.t(), llm_call_params()) :: :ok | {:error, String.t()}
   defp handle_content_result(
-         %ContentResult{stream: stream_response, context_builder: llm_context_builder},
+         %ContentResult{stream: stream_response},
          %{
            on_event: on_event_fn,
            tool_usage_counts: tool_usage_counts,
@@ -126,7 +123,6 @@ defmodule BranchedLLM.ChatOrchestrator do
     if process_stream(
          stream_response,
          on_event_fn,
-         llm_context_builder,
          tool_usage_counts,
          branch_id
        ) do
@@ -144,7 +140,7 @@ defmodule BranchedLLM.ChatOrchestrator do
        ) do
     updated_llm_call_params = %{llm_call_params | llm_context: context}
     next_llm_call_params = handle_tool_call_execution(tool_calls, updated_llm_call_params)
-    process_llm_request(%{next_llm_call_params | message: ""})
+    process_llm_request(next_llm_call_params)
   end
 
   @spec handle_tool_call_execution(list(), llm_call_params()) :: llm_call_params()
@@ -215,26 +211,24 @@ defmodule BranchedLLM.ChatOrchestrator do
   @spec process_stream(
           ReqLLM.StreamResponse.t(),
           any(),
-          (String.t() -> ReqLLM.Context.t()),
           map(),
           String.t()
         ) :: boolean()
   defp process_stream(
          stream_response,
          on_event_fn,
-         llm_context_builder,
          tool_usage_counts,
          branch_id
        ) do
     on_event_fn.({:update_tool_usage_counts, tool_usage_counts})
     start_time = :erlang.monotonic_time(:millisecond)
 
-    sent_any_chunks =
+    {sent_any_chunks, full_text} =
       stream_response
       |> ReqLLM.StreamResponse.tokens()
-      |> Enum.reduce_while(false, fn chunk, _acc ->
+      |> Enum.reduce_while({false, ""}, fn chunk, {_, acc} ->
         on_event_fn.({:llm_chunk, branch_id, chunk})
-        {:cont, true}
+        {:cont, {true, acc <> chunk}}
       end)
 
     end_time = :erlang.monotonic_time(:millisecond)
@@ -244,7 +238,7 @@ defmodule BranchedLLM.ChatOrchestrator do
     Logger.info("LLM stream complete metadata: #{inspect(metadata)}")
 
     if sent_any_chunks do
-      on_event_fn.({:llm_end, branch_id, llm_context_builder})
+      on_event_fn.({:llm_end, branch_id, full_text})
     end
 
     sent_any_chunks

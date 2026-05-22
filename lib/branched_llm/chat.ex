@@ -56,14 +56,15 @@ defmodule BranchedLLM.Chat do
 
     on_event = fn
       {:llm_chunk, _id, chunk} -> send(parent, {ref, :chunk, chunk})
-      {:llm_end, _id, builder} -> send(parent, {ref, :end, builder})
+      {:llm_end, _id, full_text} -> send(parent, {ref, :end, full_text})
       {:llm_error, _id, err} -> send(parent, {ref, :error, err})
       _ -> :ok
     end
 
+    updated_context = add_user_message(context, message)
+
     params = %{
-      message: message,
-      llm_context: context,
+      llm_context: updated_context,
       on_event: on_event,
       llm_tools: config.tools,
       chat_mod: __MODULE__,
@@ -72,13 +73,13 @@ defmodule BranchedLLM.Chat do
     }
 
     {:ok, _pid} = BranchedLLM.ChatOrchestrator.run(params)
-    wait_for_sync_result(ref, "")
+    wait_for_sync_result(ref, "", updated_context)
   end
 
-  defp wait_for_sync_result(ref, acc) do
+  defp wait_for_sync_result(ref, acc, context) do
     receive do
-      {^ref, :chunk, chunk} -> wait_for_sync_result(ref, acc <> chunk)
-      {^ref, :end, builder} -> {:ok, acc, builder.(acc)}
+      {^ref, :chunk, chunk} -> wait_for_sync_result(ref, acc <> chunk, context)
+      {^ref, :end, full_text} -> {:ok, full_text, add_assistant_message(context, full_text)}
       {^ref, :error, err} -> {:error, err}
     after
       60_000 -> {:error, "Timed out waiting for LLM response"}
@@ -86,7 +87,7 @@ defmodule BranchedLLM.Chat do
   end
 
   @doc """
-  Sends a message and returns a `BranchedLLM.LLM.StreamResult` tagged union.
+  Sends a message stream and returns a `BranchedLLM.LLM.StreamResult` tagged union.
 
   The result is one of three structs that clearly distinguishes the LLM's intent:
 
@@ -97,7 +98,8 @@ defmodule BranchedLLM.Chat do
   ## Examples
 
       iex> context = BranchedLLM.Chat.new_context("You are a helpful assistant")
-      iex> {:ok, %ContentResult{} = result} = BranchedLLM.Chat.send_message_stream("Hello!", context)
+      iex> context_with_msg = ReqLLM.Context.append(context, ReqLLM.Context.user("Hello!"))
+      iex> {:ok, %ContentResult{} = result} = BranchedLLM.Chat.send_message_stream(context_with_msg)
       iex> Enum.each(result.stream, fn chunk -> IO.write(chunk) end)
 
   ## Options
@@ -108,35 +110,24 @@ defmodule BranchedLLM.Chat do
   * `:trim_callback` - Custom context trimming callback (overrides app config). See `BranchedLLM.ContextManager`.
   """
   @impl true
-  @spec send_message_stream(String.t(), Context.t(), keyword()) ::
+  @spec send_message_stream(Context.t(), keyword()) ::
           {:ok, StreamResult.t()} | {:error, term()}
-  def send_message_stream(message, context, opts \\ []) do
+  def send_message_stream(context, opts \\ []) do
     config = build_config(opts)
 
-    updated_context =
-      if message != "" do
-        add_user_message(context, message)
-      else
-        context
-      end
-
     {trimmed_context, was_trimmed} =
-      ContextManager.trim(updated_context, context_trim_opts(opts))
+      ContextManager.trim(context, context_trim_opts(opts))
 
     if was_trimmed do
       Logger.info(
-        "Context trimmed from #{length(updated_context.messages)} to #{length(trimmed_context.messages)} messages"
+        "Context trimmed from #{length(context.messages)} to #{length(trimmed_context.messages)} messages"
       )
     end
 
-    # The context_builder captures the *untrimmed* context so that
-    # finish_ai_response still stores the full conversation history.
-    context_builder = fn final_text ->
-      add_assistant_message(updated_context, final_text)
+    case call_llm(config.model, trimmed_context, config.tools) do
+      %ErrorResult{reason: reason} -> {:error, reason}
+      result -> {:ok, result}
     end
-
-    call_llm(config.model, trimmed_context, config.tools)
-    |> unwrap_call_llm_result(context_builder)
   end
 
   @doc """
@@ -225,8 +216,14 @@ defmodule BranchedLLM.Chat do
 
     result =
       case __MODULE__.stream_text(model, context, tools: tools) do
-        {:ok, stream_response} -> stream_result(stream_response, tools)
-        {:error, reason} -> %ErrorResult{reason: reason}
+        {:ok, stream_response} ->
+          case stream_result(stream_response, tools) do
+            {:ok, stream_result_struct} -> stream_result_struct
+            {:error, reason} -> %ErrorResult{reason: reason}
+          end
+
+        {:error, reason} ->
+          %ErrorResult{reason: reason}
       end
 
     end_time = :erlang.monotonic_time(:millisecond)
@@ -249,34 +246,10 @@ defmodule BranchedLLM.Chat do
     ReqLLM.stream_text(model, context.messages, tools: tools, base_url: model_endpoint)
   end
 
-  @spec unwrap_call_llm_result(StreamResult.t(), (String.t() -> Context.t())) ::
-          {:ok, StreamResult.t()} | {:error, term()}
-  defp unwrap_call_llm_result(%ErrorResult{reason: reason}, _context_builder) do
-    {:error, reason}
-  end
-
-  defp unwrap_call_llm_result(result, context_builder) do
-    {:ok, inject_context_builder(result, context_builder)}
-  end
-
-  @spec inject_context_builder(StreamResult.t(), (String.t() -> Context.t())) ::
-          StreamResult.t()
-  defp inject_context_builder(%ContentResult{} = result, context_builder) do
-    %{result | context_builder: context_builder}
-  end
-
-  defp inject_context_builder(%ToolCallResult{} = result, context_builder) do
-    %{result | context_builder: context_builder}
-  end
-
-  defp inject_context_builder(%EmptyResult{} = result, context_builder) do
-    %{result | context_builder: context_builder}
-  end
-
   # When no tools are provided, the stream is always content — no intent detection needed.
   @spec stream_result(StreamResponse.t(), list()) :: {:ok, StreamResult.t()} | {:error, term()}
   defp stream_result(stream_response, []),
-    do: {:ok, %ContentResult{stream: stream_response, context_builder: nil}}
+    do: {:ok, %ContentResult{stream: stream_response}}
 
   # When tools are provided, peek at the stream to determine intent.
   defp stream_result(stream_response, _tools),
@@ -294,20 +267,18 @@ defmodule BranchedLLM.Chat do
         {:ok,
          %ToolCallResult{
            tool_calls: tool_calls,
-           context: stream_response.context,
-           context_builder: nil
+           context: stream_response.context
          }}
 
       {:content, consumed_chunks, remaining_stream} ->
         # It's content (text). Prepend the chunks we took and return as a normal stream.
         new_stream = Stream.concat(consumed_chunks, remaining_stream)
 
-        {:ok,
-         %ContentResult{stream: %{stream_response | stream: new_stream}, context_builder: nil}}
+        {:ok, %ContentResult{stream: %{stream_response | stream: new_stream}}}
 
       {:empty, _consumed_chunks} ->
         # Empty stream — explicit empty result, no dummy stream.
-        {:ok, %EmptyResult{context_builder: nil}}
+        {:ok, %EmptyResult{}}
     end
   rescue
     e in Jason.EncodeError -> {:error, e}

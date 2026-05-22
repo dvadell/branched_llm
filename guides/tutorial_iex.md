@@ -195,17 +195,16 @@ The `on_event` function can be used to handle streaming updates directly. In thi
 alias BranchedLLM.{Chat, ChatOrchestrator}
 
 # llm_context holds the conversation history (system prompt + past messages).
-# message is the new user input — it gets appended to the context before calling the LLM.
-# They're separate so you can reuse the same context across multiple requests.
+# The user message must be appended to the context before calling the orchestrator.
 context = Chat.new_context("You are a helpful assistant.")
+context_with_msg = ReqLLM.Context.append(context, ReqLLM.Context.user("What is 123 * 456?"))
 
 params = %{
-  message: "What is 123 * 456?",
-  llm_context: context,
+  llm_context: context_with_msg,
   on_event: fn
     {:llm_chunk, _id, chunk} -> IO.write(chunk)
     {:llm_status, _id, status} -> IO.puts("\n[Status: #{status}]")
-    {:llm_end, _id, _builder} -> IO.puts("\n[Stream Complete]")
+    {:llm_end, _id, _full_text} -> IO.puts("\n[Stream Complete]")
     {:llm_error, _id, err} -> IO.puts("\n[Error: #{err}]")
     {:update_tool_usage_counts, _counts} -> :ok
   end,
@@ -273,7 +272,8 @@ Configure a max token limit and trimming happens automatically before LLM calls:
 config :branched_llm, max_tokens: 128_000
 
 # Or per-call:
-Chat.send_message_stream("Hello!", context, max_tokens: 50_000)
+context_with_msg = ReqLLM.Context.append(context, ReqLLM.Context.user("Hello!"))
+Chat.send_message_stream(context_with_msg, max_tokens: 50_000)
 ```
 
 ### Manual Trimming
@@ -419,7 +419,7 @@ end
 |---|---|---|
 | Messages | `BranchedLLM.Message` | `new/3`, `mark_deleted/1` |
 | Branching | `BranchedLLM.BranchedChat` | `branch_off/2`, `switch_branch/2` |
-| Chat | `BranchedLLM.Chat` | `send_message/3`, `send_message_stream/3` |
+| Chat | `BranchedLLM.Chat` | `send_message/3`, `send_message_stream/2` |
 | Orchestration | `BranchedLLM.ChatOrchestrator` | `run/1` |
 | Context Window | `BranchedLLM.ContextManager` | `trim/2`, `estimate_tokens/2` |
 | Errors | `BranchedLLM.LLMErrorFormatter` | `format/1` |

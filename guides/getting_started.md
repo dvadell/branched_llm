@@ -65,13 +65,15 @@ IO.puts(response)
 
 ### Streaming
 
-For real-time UI updates, use `send_message_stream/3`:
+For real-time UI updates, use `send_message_stream/2`:
 
 ```elixir
 alias BranchedLLM.LLM.StreamResult.ContentResult
 
-{:ok, %ContentResult{stream: stream, context_builder: context_builder}} =
-  Chat.send_message_stream("Tell me a story", context)
+context_with_msg = ReqLLM.Context.append(context, ReqLLM.Context.user("Tell me a story"))
+
+{:ok, %ContentResult{stream: stream}} =
+  Chat.send_message_stream(context_with_msg)
 
 # Consume the stream token by token
 stream
@@ -84,10 +86,10 @@ IO.puts("")
 
 # Build the final context with the assistant's complete response
 final_text = Enum.map_join(ReqLLM.StreamResponse.tokens(stream), & &1)
-new_context = context_builder.(final_text)
+new_context = ReqLLM.Context.append(context_with_msg, ReqLLM.Context.assistant(final_text))
 ```
 
-The `context_builder` function takes the final assistant text and returns an updated `ReqLLM.Context` with the user message and assistant response appended.
+The caller is responsible for appending the user message beforehand and appending the final assistant text to the context when the stream is complete.
 
 ---
 
@@ -271,11 +273,10 @@ alias BranchedLLM.ChatOrchestrator
 
 caller_pid = self()
 # llm_context holds the conversation history (system prompt + past messages).
-# message is the new user input — it gets appended to the context before calling the LLM.
-# They're separate so you can reuse the same context across multiple requests.
+# The user message must be appended to the context before calling the orchestrator.
+llm_context = ReqLLM.Context.append(context, ReqLLM.Context.user("What is Elixir?"))
 params = %{
-  message: "What is Elixir?",
-  llm_context: context,
+  llm_context: llm_context,
   # on_event is a function that receives orchestrator events.
   # Typically, it sends them back to the caller pid:
   on_event: fn event -> send(caller_pid, event) end,
@@ -298,9 +299,9 @@ def handle_info({:llm_chunk, branch_id, chunk}, socket) do
   {:noreply, stream_insert(socket, :chunks, chunk)}
 end
 
-def handle_info({:llm_end, branch_id, context_builder}, socket) do
-  # Stream complete — build final context
-  new_context = context_builder.(get_last_assistant_text(socket))
+def handle_info({:llm_end, _branch_id, full_text}, socket) do
+  # Stream complete — append final assistant response to the context
+  new_context = ReqLLM.Context.append(socket.assigns.context, ReqLLM.Context.assistant(full_text))
   {:noreply, assign(socket, :context, new_context)}
 end
 
@@ -333,8 +334,9 @@ end
 {next_message, branched_chat} = BranchedChat.dequeue_message(branched_chat, "main")
 
 if next_message do
-  # Start the orchestrator for the next message
-  ChatOrchestrator.run(%{params | message: next_message})
+  # Add the next user message to the context and start the orchestrator
+  next_context = ReqLLM.Context.append(params.llm_context, ReqLLM.Context.user(next_message))
+  ChatOrchestrator.run(%{params | llm_context: next_context})
 end
 ```
 
@@ -489,7 +491,7 @@ config :branched_llm,
 
 `ContextManager.trim/2` is called automatically at two points:
 
-1. **Before LLM calls** — `Chat.send_message_stream/3` trims the context before sending it to the LLM. The `context_builder` closure captures the *untrimmed* context, so `finish_ai_response` still stores the full conversation history.
+1. **Before LLM calls** — `Chat.send_message_stream/2` trims the context before sending it to the LLM. The untrimmed history is preserved in `BranchedChat` (or your application state), so when `finish_ai_response/3` is called with the final `full_text`, the full conversation history is stored.
 
 2. **After context rebuilds** — `BranchedChat.rebuild_context_from_messages/2` trims the rebuilt context after `branch_off` or `delete_message` operations.
 

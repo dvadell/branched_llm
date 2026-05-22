@@ -4,6 +4,7 @@ defmodule BranchedLLM.BranchedChatTest do
 
   alias BranchedLLM.{BranchedChat, Message}
   alias ReqLLM.Context
+  alias ReqLLM.Message.ContentPart
 
   setup :set_mox_from_context
 
@@ -100,12 +101,17 @@ defmodule BranchedLLM.BranchedChatTest do
       chat = BranchedChat.append_chunk(chat, "main", "Hello!")
       chat = BranchedChat.set_active_task(chat, "main", self(), "Hi")
 
-      builder = fn text -> Context.new([Context.assistant(text)]) end
-      chat = BranchedChat.finish_ai_response(chat, "main", builder)
+      chat = BranchedChat.finish_ai_response(chat, "main", "Hello!")
 
       assert chat.branches["main"].active_task == nil
       assert chat.branches["main"].current_user_message == nil
       assert chat.branches["main"].tool_status == nil
+
+      assert List.last(chat.branches["main"].context.messages).content == [
+               ContentPart.text("Hello!")
+             ]
+
+      assert List.last(chat.branches["main"].context.messages).role == :assistant
     end
   end
 
@@ -290,10 +296,13 @@ defmodule BranchedLLM.BranchedChatTest do
       messages = [Message.new(:system, "System")]
       chat = BranchedChat.new(mock_chat_module(), messages, mock_context())
 
-      builder = fn text -> Context.new([Context.assistant(text)]) end
-      chat = BranchedChat.finish_ai_response(chat, "main", builder)
+      chat = BranchedChat.finish_ai_response(chat, "main", "")
 
       assert chat.branches["main"].active_task == nil
+
+      assert List.last(chat.branches["main"].context.messages).content == [
+               ContentPart.text("")
+             ]
     end
   end
 

@@ -26,7 +26,7 @@ defmodule BranchedLLM.ChatBehaviour do
 
   @callback new_context(String.t()) :: Context.t()
   @callback reset_context(Context.t()) :: Context.t()
-  @callback send_message_stream(String.t(), Context.t(), keyword()) ::
+  @callback send_message_stream(Context.t(), keyword()) ::
               {:ok, StreamResult.t()} | {:error, term()}
   @callback send_message(String.t(), Context.t(), keyword()) ::
               {:ok, String.t(), Context.t()} | {:error, term()}

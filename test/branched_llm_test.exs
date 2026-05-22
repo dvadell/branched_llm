@@ -24,7 +24,7 @@ defmodule BranchedLLMTest do
       ctx = Context.new([Context.system("test")])
       chat = BranchedLLM.new_chat(BranchedLLM.ChatMock, [], ctx)
 
-      expect(BranchedLLM.ChatMock, :send_message_stream, 1, fn _msg, _ctx, _opts ->
+      expect(BranchedLLM.ChatMock, :send_message_stream, 1, fn _ctx, _opts ->
         stream = Stream.map(["Hi"], &%{text: &1, type: :content})
         {:ok, metadata_handle} = MetadataHandle.start_link(fn -> %{} end)
 
@@ -36,8 +36,7 @@ defmodule BranchedLLMTest do
              model: "mock",
              cancel: fn -> :ok end,
              metadata_handle: metadata_handle
-           },
-           context_builder: fn t -> Context.new([Context.assistant(t)]) end
+           }
          }}
       end)
 
@@ -47,7 +46,7 @@ defmodule BranchedLLMTest do
         BranchedLLM.send_message(chat, "Hello", fn event -> send(test_pid, event) end, [], %{})
 
       assert_receive {:llm_chunk, "main", "Hi"}, 500
-      assert_receive {:llm_end, "main", _builder}, 500
+      assert_receive {:llm_end, "main", "Hi"}, 500
       assert_receive {:update_tool_usage_counts, _}, 500
     end
   end

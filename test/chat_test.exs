@@ -45,7 +45,7 @@ defmodule BranchedLLM.ChatTest do
     end
   end
 
-  describe "context trimming in send_message_stream/3" do
+  describe "context trimming in send_message_stream/2" do
     test "passes max_tokens and trim_callback opts to ContextManager" do
       # Verify that the opts are extracted correctly via context_trim_opts
       # This is tested indirectly — the ContextManager.trim call in
