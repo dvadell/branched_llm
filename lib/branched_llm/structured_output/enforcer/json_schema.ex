@@ -35,6 +35,7 @@ defmodule BranchedLLM.StructuredOutput.Enforcer.JsonSchema do
   def extract_response(%{text: text}, _schema) when is_binary(text) do
     case Jason.decode(text) do
       {:ok, map} when is_map(map) -> {:ok, map}
+      {:ok, _} -> {:error, :invalid_json}
       {:error, _} -> {:error, :invalid_json}
     end
   end
@@ -42,6 +43,7 @@ defmodule BranchedLLM.StructuredOutput.Enforcer.JsonSchema do
   def extract_response(raw_response, _schema) do
     case Jason.decode(raw_response) do
       {:ok, map} when is_map(map) -> {:ok, map}
+      {:ok, _} -> {:error, :invalid_json}
       {:error, _} -> {:error, :invalid_json}
     end
   end

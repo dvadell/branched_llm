@@ -45,6 +45,7 @@ defmodule BranchedLLM.StructuredOutput.Enforcer.Prompt do
 
     case Jason.decode(extracted) do
       {:ok, map} when is_map(map) -> {:ok, map}
+      {:ok, _} -> {:error, :invalid_json}
       {:error, _} -> {:error, :invalid_json}
     end
   end
@@ -54,6 +55,7 @@ defmodule BranchedLLM.StructuredOutput.Enforcer.Prompt do
 
     case Jason.decode(extracted) do
       {:ok, map} when is_map(map) -> {:ok, map}
+      {:ok, _} -> {:error, :invalid_json}
       {:error, _} -> {:error, :invalid_json}
     end
   end

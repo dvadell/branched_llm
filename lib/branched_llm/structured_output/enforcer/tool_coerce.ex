@@ -58,6 +58,7 @@ defmodule BranchedLLM.StructuredOutput.Enforcer.ToolCoerce do
   def extract_response(%{text: text}, _schema) when is_binary(text) do
     case Jason.decode(text) do
       {:ok, map} when is_map(map) -> {:ok, map}
+      {:ok, _} -> {:error, :invalid_json}
       {:error, _} -> {:error, :invalid_json}
     end
   end

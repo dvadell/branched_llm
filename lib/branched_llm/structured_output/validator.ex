@@ -75,10 +75,6 @@ defmodule BranchedLLM.StructuredOutput.Validator do
   end
 
   defp format_errors(errors) do
-    Enum.map(errors, fn
-      {path, message} -> "#{path}: #{message}"
-      message when is_binary(message) -> message
-      other -> inspect(other)
-    end)
+    Enum.map(errors, fn {message, path} -> "#{path}: #{message}" end)
   end
 end

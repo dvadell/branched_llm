@@ -42,20 +42,37 @@ defmodule BranchedLLM.StructuredOutput.EnforcerJsonSchemaTest do
     end
   end
 
-  describe "extract_response/2" do
+  describe "extract_response/2 with text map" do
     test "extracts JSON from text field" do
       assert {:ok, %{"name" => "test"}} =
                JsonSchema.extract_response(%{text: ~s({"name": "test"})}, %{})
     end
 
-    test "returns error for invalid JSON" do
+    test "returns error for invalid JSON in text" do
       assert {:error, :invalid_json} =
                JsonSchema.extract_response(%{text: "not json"}, %{})
     end
 
+    test "returns error when JSON in text is not an object" do
+      assert {:error, :invalid_json} =
+               JsonSchema.extract_response(%{text: ~s([1,2,3])}, %{})
+    end
+  end
+
+  describe "extract_response/2 with raw string (fallback clause)" do
     test "extracts JSON from string response" do
       assert {:ok, %{"key" => "val"}} =
                JsonSchema.extract_response(~s({"key": "val"}), %{})
+    end
+
+    test "returns error for invalid JSON in string" do
+      assert {:error, :invalid_json} =
+               JsonSchema.extract_response("not json", %{})
+    end
+
+    test "returns error when string JSON is not an object" do
+      assert {:error, :invalid_json} =
+               JsonSchema.extract_response(~s("hello"), %{})
     end
   end
 end

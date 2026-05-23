@@ -56,7 +56,6 @@ defmodule BranchedLLM.ChatOrchestrator do
   """
 
   use Retry
-
   require Logger
 
   alias BranchedLLM.LLM.StreamResult.{ContentResult, EmptyResult, ToolCallResult}
@@ -65,7 +64,6 @@ defmodule BranchedLLM.ChatOrchestrator do
   alias BranchedLLM.StructuredOutput.ValidationError
   alias BranchedLLM.StructuredOutput.Validator
   alias BranchedLLM.ToolHandler
-
   alias ReqLLM.Context
   alias ReqLLM.StreamResponse.MetadataHandle
 
@@ -142,8 +140,7 @@ defmodule BranchedLLM.ChatOrchestrator do
         {:error, "Error: #{inspect(reason)}"}
     end
   rescue
-    exception ->
-      {:error, LLMErrorFormatter.format(exception)}
+    exception -> {:error, LLMErrorFormatter.format(exception)}
   end
 
   defp build_stream_opts(llm_call_params) do
@@ -165,14 +162,8 @@ defmodule BranchedLLM.ChatOrchestrator do
       provider_opts = Enforcer.prepare_request(provider, %{}, schema)
 
       case Map.get(provider_opts, :provider_options) do
-        nil ->
-          opts_with_schema
-
-        po when is_list(po) ->
-          Keyword.put(opts_with_schema, :provider_options, po)
-
-        po when is_map(po) ->
-          Keyword.put(opts_with_schema, :provider_options, Map.to_list(po))
+        nil -> opts_with_schema
+        po -> Keyword.put(opts_with_schema, :provider_options, Enum.to_list(po))
       end
     else
       opts_with_schema
@@ -213,18 +204,12 @@ defmodule BranchedLLM.ChatOrchestrator do
        ) do
     synthetic_name = Enforcer.structured_output_tool_name()
 
-    case Enum.find(tool_calls, &ReqLLM.ToolCall.matches_name?(&1, synthetic_name)) do
-      nil ->
-        {:error, "Structured output tool call not found"}
-
-      tool_call ->
-        args = ReqLLM.ToolCall.args_map(tool_call) || %{}
-        validate_structured_output_args(args, llm_call_params)
-    end
+    tool_call = Enum.find(tool_calls, &ReqLLM.ToolCall.matches_name?(&1, synthetic_name))
+    args = ReqLLM.ToolCall.args_map(tool_call) || %{}
+    validate_structured_output_args(args, llm_call_params)
   end
 
-  @spec validate_structured_output_args(map(), llm_call_params()) ::
-          :ok | {:error, String.t()}
+  @spec validate_structured_output_args(map(), llm_call_params()) :: :ok | {:error, String.t()}
   defp validate_structured_output_args(
          args,
          %{on_event: on_event_fn, branch_id: branch_id} = llm_call_params
@@ -268,10 +253,7 @@ defmodule BranchedLLM.ChatOrchestrator do
          llm_call_params
        ) do
     updated_llm_call_params = %{llm_call_params | llm_context: context}
-
-    next_llm_call_params =
-      handle_tool_call_execution(tool_calls, updated_llm_call_params)
-
+    next_llm_call_params = handle_tool_call_execution(tool_calls, updated_llm_call_params)
     process_llm_request(next_llm_call_params)
   end
 
@@ -288,7 +270,6 @@ defmodule BranchedLLM.ChatOrchestrator do
          } = llm_call_params
        ) do
     tool_names = Enum.map_join(tool_calls, ", ", &ReqLLM.ToolCall.name/1)
-
     on_event_fn.({:llm_status, branch_id, "Using #{tool_names}..."})
 
     {tool_calls_to_execute, tool_results_for_limited_tools, new_tool_usage_counts} =
@@ -366,7 +347,6 @@ defmodule BranchedLLM.ChatOrchestrator do
       end)
 
     end_time = :erlang.monotonic_time(:millisecond)
-
     Logger.info("LLM streaming of answer took #{end_time - start_time}ms")
 
     metadata = MetadataHandle.await(stream_response.metadata_handle)
@@ -411,22 +391,11 @@ defmodule BranchedLLM.ChatOrchestrator do
 
         on_event_fn.({:llm_error, branch_id, final_error})
         {:error, "Schema validation failed after #{max_retries + 1} attempts"}
-
-      _ ->
-        on_event_fn.(
-          {:llm_error, branch_id,
-           %ValidationError{
-             message: "Schema validation failed after #{max_retries + 1} attempts"
-           }}
-        )
-
-        {:error, "Schema validation failed after #{max_retries + 1} attempts"}
     end
   end
 
   defp retry_with_schema_validation(last_response, error, llm_call_params, max_retries, attempt) do
-    %{on_event: on_event_fn, branch_id: branch_id, llm_context: llm_context} =
-      llm_call_params
+    %{on_event: on_event_fn, branch_id: branch_id, llm_context: llm_context} = llm_call_params
 
     on_event_fn.(
       {:llm_status, branch_id, "Retrying schema validation (attempt #{attempt + 1})..."}
@@ -434,9 +403,12 @@ defmodule BranchedLLM.ChatOrchestrator do
 
     retry_prompt = build_retry_prompt(last_response, error)
 
+    assistant_content =
+      if is_map(last_response), do: Jason.encode!(last_response), else: last_response
+
     retry_context =
       llm_context
-      |> Context.append(Context.assistant(last_response))
+      |> Context.append(Context.assistant(assistant_content))
       |> Context.append(Context.user(retry_prompt))
 
     retry_params = %{llm_call_params | llm_context: retry_context}
@@ -492,8 +464,7 @@ defmodule BranchedLLM.ChatOrchestrator do
           llm_call_params(),
           non_neg_integer(),
           non_neg_integer()
-        ) ::
-          :ok | {:error, String.t()}
+        ) :: :ok | {:error, String.t()}
   defp retry_handle_content_result(
          %ContentResult{stream: stream},
          last_response,
@@ -507,8 +478,7 @@ defmodule BranchedLLM.ChatOrchestrator do
       branch_id: branch_id,
       tool_usage_counts: tool_usage_counts,
       schema: schema
-    } =
-      llm_call_params
+    } = llm_call_params
 
     case process_stream(stream, on_event_fn, tool_usage_counts, branch_id) do
       {true, new_full_text} ->
@@ -545,8 +515,7 @@ defmodule BranchedLLM.ChatOrchestrator do
           llm_call_params(),
           non_neg_integer(),
           non_neg_integer()
-        ) ::
-          :ok | {:error, String.t()}
+        ) :: :ok | {:error, String.t()}
   defp retry_handle_tool_call_result(
          tool_calls,
          last_response,
@@ -582,12 +551,11 @@ defmodule BranchedLLM.ChatOrchestrator do
           llm_call_params(),
           non_neg_integer(),
           non_neg_integer()
-        ) ::
-          :ok | {:error, String.t()}
+        ) :: :ok | {:error, String.t()}
   defp retry_handle_structured_output(
          tool_calls,
-         last_response,
-         error,
+         _last_response,
+         _error,
          llm_call_params,
          max_retries,
          attempt
@@ -595,51 +563,40 @@ defmodule BranchedLLM.ChatOrchestrator do
     %{on_event: on_event_fn, branch_id: branch_id, schema: schema} = llm_call_params
     synthetic_name = Enforcer.structured_output_tool_name()
 
-    case Enum.find(tool_calls, &ReqLLM.ToolCall.matches_name?(&1, synthetic_name)) do
-      nil ->
+    tool_call = Enum.find(tool_calls, &ReqLLM.ToolCall.matches_name?(&1, synthetic_name))
+    args = ReqLLM.ToolCall.args_map(tool_call) || %{}
+
+    case Validator.check_schema(args, schema) do
+      :ok ->
+        on_event_fn.({:llm_end, branch_id, args})
+        :ok
+
+      {:error, %ValidationError{} = new_error} ->
         retry_with_schema_validation(
-          last_response,
-          error,
+          Jason.encode!(args),
+          new_error,
           llm_call_params,
           max_retries,
           attempt + 1
         )
-
-      tool_call ->
-        args = ReqLLM.ToolCall.args_map(tool_call) || %{}
-
-        case Validator.check_schema(args, schema) do
-          :ok ->
-            on_event_fn.({:llm_end, branch_id, args})
-            :ok
-
-          {:error, %ValidationError{} = new_error} ->
-            retry_with_schema_validation(
-              Jason.encode!(args),
-              new_error,
-              llm_call_params,
-              max_retries,
-              attempt + 1
-            )
-        end
     end
   end
 
   defp build_retry_prompt(last_response, %ValidationError{validation_errors: errors}) do
+    last_response_str =
+      if is_map(last_response), do: Jason.encode!(last_response), else: last_response
+
     error_details = Enum.join(errors, "\n")
 
-    "Your previous response was invalid. The response was:\n#{last_response}\n\nValidation errors:\n#{error_details}\n\nPlease respond again with valid JSON matching the schema."
+    "Your previous response was invalid. The response was:\n#{last_response_str}\n\nValidation errors:\n#{error_details}\n\nPlease respond again with valid JSON matching the schema."
   end
 
   # --- Helpers ---
 
   defp structured_output_tool_call?(tool_calls) when is_list(tool_calls) do
     synthetic_name = Enforcer.structured_output_tool_name()
-
     Enum.any?(tool_calls, &ReqLLM.ToolCall.matches_name?(&1, synthetic_name))
   end
-
-  defp structured_output_tool_call?(_), do: false
 
   defp schema_max_retries(%{schema_max_retries: n}) when is_integer(n) and n >= 0, do: n
   defp schema_max_retries(_), do: @default_schema_max_retries

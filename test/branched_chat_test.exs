@@ -7,6 +7,7 @@ defmodule BranchedLLM.BranchedChatTest do
   alias ReqLLM.Message.ContentPart
 
   setup :set_mox_from_context
+  setup :verify_on_exit!
 
   defp mock_context do
     Context.new([Context.system("test")])
@@ -272,6 +273,37 @@ defmodule BranchedLLM.BranchedChatTest do
       assert List.first(tree).id == "main"
       assert length(List.first(tree).children) == 1
       assert length(List.first(List.first(tree).children).children) == 1
+    end
+
+    test "builds tree with sibling branches sharing the same parent" do
+      messages = [
+        Message.new(:system, "System"),
+        Message.new(:user, "Hello"),
+        Message.new(:assistant, "Hi!")
+      ]
+
+      stub(BranchedLLM.ChatMock, :reset_context, fn _ctx -> mock_context() end)
+
+      chat = BranchedChat.new(mock_chat_module(), messages, mock_context())
+
+      # Branch off from the same message twice — creates sibling branches
+      user_msg_id = Enum.at(messages, 1).id
+      chat = BranchedChat.branch_off(chat, user_msg_id)
+      first_child_id = chat.current_branch_id
+
+      chat = BranchedChat.switch_branch(chat, "main")
+      chat = BranchedChat.branch_off(chat, user_msg_id)
+      second_child_id = chat.current_branch_id
+
+      tree = BranchedChat.build_tree(chat)
+
+      assert length(tree) == 1
+      root = List.first(tree)
+      assert root.id == "main"
+      assert length(root.children) == 2
+      child_ids = Enum.map(root.children, & &1.id)
+      assert first_child_id in child_ids
+      assert second_child_id in child_ids
     end
   end
 

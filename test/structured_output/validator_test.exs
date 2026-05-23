@@ -34,6 +34,13 @@ defmodule BranchedLLM.StructuredOutput.ValidatorTest do
                Validator.validate(~s([1, 2, 3]), schema)
     end
 
+    test "returns error when JSON is a bare string" do
+      schema = %{"type" => "object", "properties" => %{}}
+
+      assert {:error, %ValidationError{message: "Response is not valid JSON"}} =
+               Validator.validate(~s("just a string"), schema)
+    end
+
     test "returns error when JSON does not match schema" do
       schema = %{
         "type" => "object",
@@ -112,6 +119,26 @@ defmodule BranchedLLM.StructuredOutput.ValidatorTest do
 
       assert {:ok, %{"name" => "Bob"}} = Validator.validate(~s({"name": "Bob"}), schema)
     end
+
+    test "returns validation errors as strings" do
+      schema = %{
+        "type" => "object",
+        "properties" => %{
+          "x" => %{"type" => "string"}
+        },
+        "required" => ["x"]
+      }
+
+      assert {:error, %ValidationError{validation_errors: errors}} =
+               Validator.validate(~s({}), schema)
+
+      assert is_list(errors)
+      assert errors != []
+
+      Enum.each(errors, fn error ->
+        assert is_binary(error)
+      end)
+    end
   end
 
   describe "check_schema/2" do
@@ -133,6 +160,20 @@ defmodule BranchedLLM.StructuredOutput.ValidatorTest do
       }
 
       assert {:error, %ValidationError{}} = Validator.check_schema(%{}, schema)
+    end
+
+    test "returns error for wrong type" do
+      schema = %{
+        "type" => "object",
+        "properties" => %{"count" => %{"type" => "integer"}},
+        "required" => ["count"]
+      }
+
+      assert {:error, %ValidationError{validation_errors: errors}} =
+               Validator.check_schema(%{"count" => "not_int"}, schema)
+
+      assert is_list(errors)
+      assert errors != []
     end
   end
 end

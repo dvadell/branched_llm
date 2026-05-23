@@ -33,6 +33,11 @@ defmodule BranchedLLM.StructuredOutput.EnforcerTest do
       assert Enforcer.enforcer_for(:vllm) ==
                BranchedLLM.StructuredOutput.Enforcer.Prompt
     end
+
+    test "returns Prompt for any other atom" do
+      assert Enforcer.enforcer_for(:some_random_provider) ==
+               BranchedLLM.StructuredOutput.Enforcer.Prompt
+    end
   end
 
   describe "structured_output_tool_name/0" do
@@ -53,11 +58,24 @@ defmodule BranchedLLM.StructuredOutput.EnforcerTest do
       assert tool["function"]["name"] == "__structured_output__"
       assert tool["function"]["parameters"] == schema
       assert tool["type"] == "function"
+      assert tool["function"]["description"] =~ "structured data"
+    end
+  end
+
+  describe "resolve_provider/1" do
+    test "resolves provider from valid model string" do
+      # This calls ReqLLM.model which needs LLMDB
+      result = Enforcer.resolve_provider("openai:gpt-4")
+      assert is_atom(result)
+    end
+
+    test "returns :unknown for invalid model string" do
+      assert Enforcer.resolve_provider("totally_invalid_model_string_xyz") == :unknown
     end
   end
 
   describe "prepare_request/3" do
-    test "dispatches to correct enforcer" do
+    test "dispatches to correct enforcer for OpenAI" do
       schema = %{"type" => "object", "properties" => %{}}
       request = %{}
 
@@ -68,6 +86,34 @@ defmodule BranchedLLM.StructuredOutput.EnforcerTest do
                json_schema: schema
              }
     end
+
+    test "dispatches to correct enforcer for Anthropic" do
+      schema = %{"type" => "object", "properties" => %{}}
+      request = %{tools: []}
+
+      result = Enforcer.prepare_request(:anthropic, request, schema)
+
+      assert Map.has_key?(result, :tool_choice)
+    end
+
+    test "dispatches to correct enforcer for Ollama" do
+      schema = %{"type" => "object", "properties" => %{}}
+      request = %{provider_options: []}
+
+      result = Enforcer.prepare_request(:ollama, request, schema)
+
+      assert Keyword.get(result.provider_options, :format) == schema
+    end
+
+    test "dispatches to fallback enforcer for unknown" do
+      schema = %{"type" => "object", "properties" => %{}}
+      request = %{context: nil}
+
+      result = Enforcer.prepare_request(:unknown_provider, request, schema)
+
+      assert Map.has_key?(result, :system_prompt)
+      assert result.system_prompt =~ "valid JSON"
+    end
   end
 
   describe "extract_response/3" do
@@ -77,6 +123,18 @@ defmodule BranchedLLM.StructuredOutput.EnforcerTest do
 
       assert {:ok, %{"key" => "value"}} =
                Enforcer.extract_response(:openai, raw_response, schema)
+    end
+
+    test "dispatches to ToolCoerce for Anthropic tool_calls" do
+      schema = %{"type" => "object", "properties" => %{}}
+
+      tool_call =
+        ReqLLM.ToolCall.new("call_1", "__structured_output__", ~s({"key": "value"}))
+
+      raw_response = %{tool_calls: [tool_call]}
+
+      assert {:ok, %{"key" => "value"}} =
+               Enforcer.extract_response(:anthropic, raw_response, schema)
     end
   end
 end
