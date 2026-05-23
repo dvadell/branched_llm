@@ -196,11 +196,14 @@ alias BranchedLLM.{Chat, ChatOrchestrator}
 
 # llm_context holds the conversation history (system prompt + past messages).
 # The user message must be appended to the context before calling the orchestrator.
-context = Chat.new_context("You are a helpful assistant.")
-context_with_msg = ReqLLM.Context.append(context, ReqLLM.Context.user("What is 123 * 456?"))
+context = (
+  "You are a helpful assistant."
+  |> Chat.new_context()
+  |> ReqLLM.Context.append(ReqLLM.Context.user("What is 123 * 456?"))
+)
 
 params = %{
-  llm_context: context_with_msg,
+  llm_context: context,
   on_event: fn
     {:llm_chunk, _id, chunk} -> IO.write(chunk)
     {:llm_status, _id, status} -> IO.puts("\n[Status: #{status}]")
@@ -208,9 +211,7 @@ params = %{
     {:llm_error, _id, err} -> IO.puts("\n[Error: #{err}]")
     {:update_tool_usage_counts, _counts} -> :ok
   end,
-  llm_tools: [calculator],
   chat_mod: Chat,
-  tool_usage_counts: %{},
   branch_id: "main"
 }
 

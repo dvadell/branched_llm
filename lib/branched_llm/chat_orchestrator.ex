@@ -72,9 +72,9 @@ defmodule BranchedLLM.ChatOrchestrator do
   @type llm_call_params :: %{
           required(:llm_context) => ReqLLM.Context.t(),
           required(:on_event) => fun(),
-          required(:llm_tools) => list(),
+          optional(:llm_tools) => list(),
           required(:chat_mod) => module(),
-          required(:tool_usage_counts) => map(),
+          optional(:tool_usage_counts) => map(),
           required(:branch_id) => String.t(),
           optional(:schema) => map() | nil,
           optional(:schema_max_retries) => non_neg_integer() | nil
@@ -116,7 +116,6 @@ defmodule BranchedLLM.ChatOrchestrator do
          %{
            llm_context: llm_context,
            on_event: _event_fn,
-           llm_tools: _llm_tools,
            chat_mod: chat_mod
          } = llm_call_params
        ) do
@@ -177,9 +176,10 @@ defmodule BranchedLLM.ChatOrchestrator do
   @spec handle_content_result(ContentResult.t(), llm_call_params()) :: :ok | {:error, String.t()}
   defp handle_content_result(
          %ContentResult{stream: stream_response},
-         %{on_event: on_event_fn, tool_usage_counts: tool_usage_counts, branch_id: branch_id} =
+         %{on_event: on_event_fn, branch_id: branch_id} =
            llm_call_params
        ) do
+    tool_usage_counts = Map.get(llm_call_params, :tool_usage_counts, %{})
     schema = Map.get(llm_call_params, :schema)
 
     case process_stream(stream_response, on_event_fn, tool_usage_counts, branch_id) do
@@ -262,13 +262,13 @@ defmodule BranchedLLM.ChatOrchestrator do
          tool_calls,
          %{
            llm_context: llm_context,
-           llm_tools: llm_tools,
            chat_mod: chat_mod,
-           tool_usage_counts: tool_usage_counts,
            on_event: on_event_fn,
            branch_id: branch_id
          } = llm_call_params
        ) do
+    llm_tools = Map.get(llm_call_params, :llm_tools, [])
+    tool_usage_counts = Map.get(llm_call_params, :tool_usage_counts, %{})
     tool_names = Enum.map_join(tool_calls, ", ", &ReqLLM.ToolCall.name/1)
     on_event_fn.({:llm_status, branch_id, "Using #{tool_names}..."})
 
@@ -476,9 +476,10 @@ defmodule BranchedLLM.ChatOrchestrator do
     %{
       on_event: on_event_fn,
       branch_id: branch_id,
-      tool_usage_counts: tool_usage_counts,
       schema: schema
     } = llm_call_params
+
+    tool_usage_counts = Map.get(llm_call_params, :tool_usage_counts, %{})
 
     case process_stream(stream, on_event_fn, tool_usage_counts, branch_id) do
       {true, new_full_text} ->

@@ -14,10 +14,20 @@ defmodule BranchedLLM.StructuredOutput.Enforcer do
               {:ok, map()} | {:error, term()}
 
   @doc """
-  Resolves the provider atom from a model string (e.g. `"openai:gpt-4"` → `:openai`).
+  Resolves the provider atom from a model spec (string or `%LLMDB.Model{}`).
+
+  Strings like `"openai:gpt-4"` are split on `:` to extract the provider.
+  `%LLMDB.Model{}` structs use the `:provider` field directly.
   """
-  @spec resolve_provider(String.t()) :: atom()
-  def resolve_provider(model_string) do
+  @spec resolve_provider(ReqLLM.model_input()) :: atom()
+  def resolve_provider(%LLMDB.Model{provider: provider}) when is_atom(provider) do
+    case ReqLLM.provider(provider) do
+      {:ok, _} -> provider
+      {:error, _} -> :unknown
+    end
+  end
+
+  def resolve_provider(model_string) when is_binary(model_string) do
     case String.split(model_string, ":", parts: 2) do
       [provider_str, _model_id] ->
         try do
@@ -35,6 +45,8 @@ defmodule BranchedLLM.StructuredOutput.Enforcer do
         :unknown
     end
   end
+
+  def resolve_provider(_), do: :unknown
 
   @doc """
   Dispatches `prepare_request/2` to the appropriate enforcer module.

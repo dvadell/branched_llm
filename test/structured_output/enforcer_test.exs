@@ -85,6 +85,28 @@ defmodule BranchedLLM.StructuredOutput.EnforcerTest do
     end
   end
 
+  describe "resolve_provider/1 with LLMDB.Model struct" do
+    test "resolves provider from valid LLMDB.Model struct" do
+      model = %LLMDB.Model{provider: :openai, id: "gpt-4"}
+      result = Enforcer.resolve_provider(model)
+      assert result == :openai
+    end
+
+    test "returns :unknown for LLMDB.Model with unregistered provider" do
+      model = %LLMDB.Model{provider: :httpc, id: "some-model"}
+      result = Enforcer.resolve_provider(model)
+      assert result == :unknown
+    end
+  end
+
+  describe "resolve_provider/1 with unsupported input" do
+    test "returns :unknown for non-string, non-struct input" do
+      assert Enforcer.resolve_provider(nil) == :unknown
+      assert Enforcer.resolve_provider(123) == :unknown
+      assert Enforcer.resolve_provider([]) == :unknown
+    end
+  end
+
   describe "prepare_request/3" do
     test "dispatches to correct enforcer for OpenAI" do
       schema = %{"type" => "object", "properties" => %{}}

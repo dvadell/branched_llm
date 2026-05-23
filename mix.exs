@@ -15,7 +15,8 @@ defmodule BranchedLLM.MixProject do
       aliases: aliases(),
       package: package(),
       description: "A branched conversation library for LLM interactions with tool support",
-      test_coverage: test_coverage()
+      test_coverage: test_coverage(),
+      dialyzer: [plt_add_deps: :app_tree, plt_add_apps: [:llm_db]]
     ]
   end
 

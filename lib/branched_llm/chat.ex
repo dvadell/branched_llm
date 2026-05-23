@@ -182,15 +182,46 @@ defmodule BranchedLLM.Chat do
   end
 
   @doc """
-  Returns the default model string.
+  Returns the default model, resolved to a `%LLMDB.Model{}` struct.
 
   Reads from :req_llm config first, falls back to :branched_llm, then to a default.
+  Resolving the model string through `ReqLLM.model/1` once avoids repeated
+  "unverified model" warnings on every LLM call.
   """
-  @spec default_model() :: String.t()
+  @spec default_model() :: ReqLLM.model_input()
   @impl true
   def default_model do
-    Application.get_env(:req_llm, :model) ||
-      Application.get_env(:branched_llm, :ai_model, "openai:cara-cpu")
+    model_string =
+      Application.get_env(:req_llm, :model) ||
+        Application.get_env(:branched_llm, :ai_model, "openai:cara-cpu")
+
+    case resolve_model(model_string) do
+      {:ok, model} -> model
+      {:error, _} -> model_string
+    end
+  end
+
+  # Resolves a "provider:model_id" string into a %LLMDB.Model{} without
+  # triggering the "unverified model" warning from ReqLLM.model/1.
+  # Falls back to ReqLLM.model/1 for known-catalog models.
+  @spec resolve_model(String.t()) :: {:ok, LLMDB.Model.t()} | {:error, term()}
+  defp resolve_model(model_string) do
+    case String.split(model_string, ":", parts: 2) do
+      [provider_str, model_id] ->
+        try do
+          provider = String.to_existing_atom(provider_str)
+
+          # Use inline model spec to bypass LLMDB catalog lookup and
+          # avoid the "unverified model" warning for custom/local models.
+          ReqLLM.model(%{provider: provider, id: model_id})
+        rescue
+          ArgumentError ->
+            ReqLLM.model(model_string)
+        end
+
+      _ ->
+        ReqLLM.model(model_string)
+    end
   end
 
   ## Private Functions
@@ -217,7 +248,7 @@ defmodule BranchedLLM.Chat do
     Context.append(context, assistant(message, opts))
   end
 
-  @spec call_llm(String.t(), Context.t(), list(), keyword()) :: StreamResult.t()
+  @spec call_llm(ReqLLM.model_input(), Context.t(), list(), keyword()) :: StreamResult.t()
   defp call_llm(model, context, tools, opts) do
     Logger.info("LLM call_llm starting with context: #{inspect(context)}")
 
@@ -253,7 +284,7 @@ defmodule BranchedLLM.Chat do
     end_time = :erlang.monotonic_time(:millisecond)
 
     Logger.info(
-      "LLM call_llm(model: #{model}, tools: #{length(tools)}) took #{end_time - start_time}ms"
+      "LLM call_llm(model: #{inspect(model)}, tools: #{length(tools)}) took #{end_time - start_time}ms"
     )
 
     result
@@ -276,7 +307,7 @@ defmodule BranchedLLM.Chat do
 
   @doc false
   @impl true
-  @spec stream_text(String.t(), Context.t(), keyword()) ::
+  @spec stream_text(ReqLLM.model_input(), Context.t(), keyword()) ::
           {:ok, StreamResponse.t()} | {:error, term()}
   def stream_text(model, context, opts) do
     model_endpoint = Keyword.get(opts, :base_url, endpoints().model_endpoint)

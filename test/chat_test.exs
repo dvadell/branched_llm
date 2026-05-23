@@ -41,7 +41,7 @@ defmodule BranchedLLM.ChatTest do
   describe "default_model/0" do
     test "returns the configured model" do
       model = Chat.default_model()
-      assert is_binary(model)
+      assert match?(%LLMDB.Model{}, model) or is_binary(model)
     end
   end
 
