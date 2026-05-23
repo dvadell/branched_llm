@@ -64,13 +64,24 @@ defmodule BranchedLLM.StructuredOutput.EnforcerTest do
 
   describe "resolve_provider/1" do
     test "resolves provider from valid model string" do
-      # This calls ReqLLM.model which needs LLMDB
       result = Enforcer.resolve_provider("openai:gpt-4")
       assert is_atom(result)
     end
 
     test "returns :unknown for invalid model string" do
       assert Enforcer.resolve_provider("totally_invalid_model_string_xyz") == :unknown
+    end
+
+    test "returns :unknown for unregistered provider" do
+      # :httpc is an existing Erlang atom but not a registered ReqLLM provider
+      assert is_atom(:httpc)
+      assert Enforcer.resolve_provider("httpc:some-model") == :unknown
+    end
+
+    test "returns :unknown for non-atom provider prefix" do
+      # Use a random string that is extremely unlikely to be an existing atom
+      random_provider = "x_#{:erlang.unique_integer([:positive])}_not_an_atom"
+      assert Enforcer.resolve_provider("#{random_provider}:model") == :unknown
     end
   end
 

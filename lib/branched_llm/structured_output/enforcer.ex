@@ -18,9 +18,21 @@ defmodule BranchedLLM.StructuredOutput.Enforcer do
   """
   @spec resolve_provider(String.t()) :: atom()
   def resolve_provider(model_string) do
-    case ReqLLM.model(model_string) do
-      {:ok, model} -> model.provider
-      {:error, _} -> :unknown
+    case String.split(model_string, ":", parts: 2) do
+      [provider_str, _model_id] ->
+        try do
+          provider = String.to_existing_atom(provider_str)
+
+          case ReqLLM.provider(provider) do
+            {:ok, _} -> provider
+            {:error, _} -> :unknown
+          end
+        rescue
+          ArgumentError -> :unknown
+        end
+
+      _ ->
+        :unknown
     end
   end
 

@@ -1,10 +1,10 @@
 defmodule BranchedLLM.OrchestratorTest do
   use ExUnit.Case, async: false
+
   import Mox
 
   alias BranchedLLM.ChatOrchestrator
   alias BranchedLLM.LLM.StreamResult.{ContentResult, EmptyResult, ToolCallResult}
-
   alias ReqLLM.Context
   alias ReqLLM.StreamResponse.MetadataHandle
 
@@ -87,11 +87,7 @@ defmodule BranchedLLM.OrchestratorTest do
       expect(BranchedLLM.ChatMock, :send_message_stream, 1, fn _ctx, opts ->
         :counters.add(call_count, 1, 1)
         assert Keyword.has_key?(opts, :tools)
-
-        {:ok,
-         %ContentResult{
-           stream: stream_response(["response"])
-         }}
+        {:ok, %ContentResult{stream: stream_response(["response"])}}
       end)
 
       pid = self()
@@ -132,10 +128,7 @@ defmodule BranchedLLM.OrchestratorTest do
 
       # Second call (after recursion) returns text
       expect(BranchedLLM.ChatMock, :send_message_stream, 1, fn _ctx, _opts ->
-        {:ok,
-         %ContentResult{
-           stream: stream_response(["Final answer"])
-         }}
+        {:ok, %ContentResult{stream: stream_response(["Final answer"])}}
       end)
 
       pid = self()

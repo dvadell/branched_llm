@@ -1,7 +1,11 @@
 defmodule BranchedLLM.ToolHandlerTest do
   use ExUnit.Case, async: true
+
+  import ExUnit.CaptureLog
+
   alias BranchedLLM.ToolHandler
   alias ReqLLM.Context
+
   import Mox
 
   setup :set_mox_from_context
@@ -27,20 +31,21 @@ defmodule BranchedLLM.ToolHandlerTest do
   describe "handle_tool_calls/4" do
     test "executes multiple tool calls and returns updated context" do
       tool = %MockTool{name: "get_weather"}
-
       tool_call = make_tool_call("call_123", "get_weather", %{"location" => "NYC"})
-
       context = Context.new([])
-      result = ToolHandler.handle_tool_calls([tool_call], context, [tool], MockChatModule)
 
-      # Context has tool result appended - just verify it's a Context struct
+      {result, _log} =
+        with_log(fn ->
+          ToolHandler.handle_tool_calls([tool_call], context, [tool], MockChatModule)
+        end)
+
       assert %Context{} = result
     end
 
     test "handles tool not found gracefully" do
       tool_call = make_tool_call("call_456", "nonexistent_tool", %{})
-
       context = Context.new([])
+
       result = ToolHandler.handle_tool_calls([tool_call], context, [], MockChatModule)
 
       assert %Context{} = result
@@ -50,19 +55,21 @@ defmodule BranchedLLM.ToolHandlerTest do
   describe "process_tool_call/4" do
     test "executes a tool successfully and appends result to context" do
       tool = %MockTool{name: "calculator"}
-
       tool_call = make_tool_call("call_789", "calculator", %{"a" => 5, "b" => 3})
-
       context = Context.new([])
-      result = ToolHandler.process_tool_call(tool_call, [tool], context, MockChatModule)
+
+      {result, _log} =
+        with_log(fn ->
+          ToolHandler.process_tool_call(tool_call, [tool], context, MockChatModule)
+        end)
 
       assert %Context{} = result
     end
 
     test "returns error message when tool is not found" do
       tool_call = make_tool_call("call_abc", "missing_tool", %{})
-
       context = Context.new([])
+
       result = ToolHandler.process_tool_call(tool_call, [], context, MockChatModule)
 
       assert %Context{} = result
@@ -70,11 +77,13 @@ defmodule BranchedLLM.ToolHandlerTest do
 
     test "handles tool execution error" do
       tool = %MockTool{name: "failing_tool"}
-
       tool_call = make_tool_call("call_err", "failing_tool", %{})
-
       context = Context.new([])
-      result = ToolHandler.process_tool_call(tool_call, [tool], context, MockChatModule)
+
+      {result, _log} =
+        with_log(fn ->
+          ToolHandler.process_tool_call(tool_call, [tool], context, MockChatModule)
+        end)
 
       assert %Context{} = result
     end

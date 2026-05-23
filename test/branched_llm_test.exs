@@ -1,5 +1,6 @@
 defmodule BranchedLLMTest do
   use ExUnit.Case, async: false
+
   import Mox
 
   alias BranchedLLM.BranchedChat
