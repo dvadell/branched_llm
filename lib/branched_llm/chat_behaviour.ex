@@ -32,6 +32,7 @@ defmodule BranchedLLM.ChatBehaviour do
               {:ok, String.t(), Context.t()} | {:error, term()}
   @callback execute_tool(Tool.t(), map()) :: {:ok, term()} | {:error, term()}
   @callback health_check() :: :ok | {:error, term()}
+  @callback default_model() :: String.t()
 
   @doc """
   Calls the LLM provider to stream text for the given messages.

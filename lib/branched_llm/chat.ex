@@ -21,6 +21,7 @@ defmodule BranchedLLM.Chat do
   alias BranchedLLM.LLM.StreamParser
   alias BranchedLLM.LLM.StreamResult
   alias BranchedLLM.LLM.StreamResult.{ContentResult, EmptyResult, ErrorResult, ToolCallResult}
+  alias BranchedLLM.StructuredOutput.Enforcer
 
   alias ReqLLM.Context
   alias ReqLLM.StreamResponse
@@ -114,6 +115,13 @@ defmodule BranchedLLM.Chat do
           {:ok, StreamResult.t()} | {:error, term()}
   def send_message_stream(context, opts \\ []) do
     config = build_config(opts)
+    schema = Keyword.get(opts, :schema)
+    provider_options = Keyword.get(opts, :provider_options)
+
+    call_opts =
+      []
+      |> maybe_put_schema(schema)
+      |> maybe_put_provider_options_from_opts(provider_options)
 
     {trimmed_context, was_trimmed} =
       ContextManager.trim(context, context_trim_opts(opts))
@@ -124,7 +132,7 @@ defmodule BranchedLLM.Chat do
       )
     end
 
-    case call_llm(config.model, trimmed_context, config.tools) do
+    case call_llm(config.model, trimmed_context, config.tools, call_opts) do
       %ErrorResult{reason: reason} -> {:error, reason}
       result -> {:ok, result}
     end
@@ -179,6 +187,7 @@ defmodule BranchedLLM.Chat do
   Reads from :req_llm config first, falls back to :branched_llm, then to a default.
   """
   @spec default_model() :: String.t()
+  @impl true
   def default_model do
     Application.get_env(:req_llm, :model) ||
       Application.get_env(:branched_llm, :ai_model, "openai:cara-cpu")
@@ -208,16 +217,31 @@ defmodule BranchedLLM.Chat do
     Context.append(context, assistant(message, opts))
   end
 
-  @spec call_llm(String.t(), Context.t(), list()) :: StreamResult.t()
-  defp call_llm(model, context, tools) do
+  @spec call_llm(String.t(), Context.t(), list(), keyword()) :: StreamResult.t()
+  defp call_llm(model, context, tools, opts) do
     Logger.info("LLM call_llm starting with context: #{inspect(context)}")
 
     start_time = :erlang.monotonic_time(:millisecond)
 
+    stream_opts =
+      [tools: tools]
+      |> maybe_put_provider_options(opts)
+
     result =
-      case __MODULE__.stream_text(model, context, tools: tools) do
+      case __MODULE__.stream_text(model, context, stream_opts) do
         {:ok, stream_response} ->
-          case stream_result(stream_response, tools) do
+          schema = Keyword.get(opts, :schema)
+
+          effective_tools =
+            if schema &&
+                 Enforcer.resolve_provider(model) == :anthropic do
+              synthetic_tool = Enforcer.build_synthetic_tool(schema)
+              tools ++ [synthetic_tool]
+            else
+              tools
+            end
+
+          case stream_result(stream_response, effective_tools) do
             {:ok, stream_result_struct} -> stream_result_struct
             {:error, reason} -> %ErrorResult{reason: reason}
           end
@@ -235,6 +259,21 @@ defmodule BranchedLLM.Chat do
     result
   end
 
+  defp maybe_put_provider_options(stream_opts, opts) do
+    case Keyword.get(opts, :provider_options) do
+      nil -> stream_opts
+      po -> Keyword.put(stream_opts, :provider_options, po)
+    end
+  end
+
+  defp maybe_put_schema(opts, nil), do: opts
+  defp maybe_put_schema(opts, schema), do: Keyword.put(opts, :schema, schema)
+
+  defp maybe_put_provider_options_from_opts(opts, nil), do: opts
+
+  defp maybe_put_provider_options_from_opts(opts, po),
+    do: Keyword.put(opts, :provider_options, po)
+
   @doc false
   @impl true
   @spec stream_text(String.t(), Context.t(), keyword()) ::
@@ -242,8 +281,18 @@ defmodule BranchedLLM.Chat do
   def stream_text(model, context, opts) do
     model_endpoint = Keyword.get(opts, :base_url, endpoints().model_endpoint)
     tools = Keyword.get(opts, :tools, [])
+    provider_options = Keyword.get(opts, :provider_options, [])
 
-    ReqLLM.stream_text(model, context.messages, tools: tools, base_url: model_endpoint)
+    base_opts = [tools: tools, base_url: model_endpoint]
+
+    stream_opts =
+      if provider_options != [] do
+        Keyword.put(base_opts, :provider_options, provider_options)
+      else
+        base_opts
+      end
+
+    ReqLLM.stream_text(model, context.messages, stream_opts)
   end
 
   # When no tools are provided, the stream is always content — no intent detection needed.
