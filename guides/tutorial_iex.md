@@ -89,16 +89,16 @@ You'll see the response appear token-by-token in your terminal. The function ret
 
 ### Capturing Metadata
 
-The `:llm_metadata` event fires as soon as the provider's usage data is available — no ordering guarantee relative to other events. A common pattern is to capture it in the callback:
+The `:llm_metadata` event fires as soon as the provider's usage data is available — no ordering guarantee relative to other events. Since `ChatOrchestrator.run/1` runs in a separate `Task`, the `on_event` callback executes in that Task's process — so use `send/2` to pass data back to your IEx process:
 
 ```elixir
-metadata = nil
+caller = self()
 
 {:ok, _pid} = ChatOrchestrator.run(%{
   llm_context: context,
   on_event: fn
     {:llm_metadata, _id, meta} ->
-      Process.put(:llm_metadata, meta)
+      send(caller, {:metadata, meta})
     {:llm_chunk, _id, chunk} ->
       IO.write(chunk)
     {:llm_end, _id, _text} ->
@@ -109,9 +109,13 @@ metadata = nil
   branch_id: "main"
 })
 
-# Retrieve after the stream completes
-Process.get(:llm_metadata)
-#=> %{usage: %{input_tokens: 42, output_tokens: 87}}
+# Collect the metadata when it arrives
+receive do
+  {:metadata, meta} -> IO.inspect(meta, label: "Usage")
+after
+  60_000 -> IO.puts("Timed out")
+end
+#=> Usage: %{usage: %{input_tokens: 85, output_tokens: 61, total_tokens: 146}, ...}
 ```
 
 ---

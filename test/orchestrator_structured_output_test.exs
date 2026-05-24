@@ -988,5 +988,4 @@ defmodule BranchedLLM.OrchestratorStructuredOutputTest do
       assert_receive {:llm_end, "main", %{"name" => "Retry"}}, 2000
     end
   end
-
 end

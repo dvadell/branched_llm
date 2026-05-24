@@ -98,9 +98,12 @@ defmodule BranchedLLM.ChatOrchestrator do
       result =
         retry with: constant_backoff(100) |> Stream.take(10) do
           case process_llm_request(params) do
-            :ok -> :ok
-            {:error, reason} -> params.on_event.({:llm_status, params.branch_id, "Retrying..."})
-            {:error, reason}
+            :ok ->
+              :ok
+
+            {:error, reason} ->
+              params.on_event.({:llm_status, params.branch_id, "Retrying..."})
+              {:error, reason}
           end
         after
           result -> result
@@ -253,7 +256,11 @@ defmodule BranchedLLM.ChatOrchestrator do
   @spec handle_tool_call_result(ToolCallResult.t(), llm_call_params()) ::
           :ok | {:error, String.t()}
   defp handle_tool_call_result(
-         %ToolCallResult{tool_calls: tool_calls, context: context, metadata_handle: metadata_handle},
+         %ToolCallResult{
+           tool_calls: tool_calls,
+           context: context,
+           metadata_handle: metadata_handle
+         },
          llm_call_params
        ) do
     emit_metadata(llm_call_params, metadata_handle)
@@ -281,8 +288,7 @@ defmodule BranchedLLM.ChatOrchestrator do
 
     {tool_calls_to_execute, tool_results_for_limited_tools, new_tool_usage_counts} =
       Enum.reduce(tool_calls, {[], [], tool_usage_counts}, fn tool_call,
-                                                              {exec_acc, limited_acc,
-                                                               counts_acc} ->
+                                                              {exec_acc, limited_acc, counts_acc} ->
         tool_name = ReqLLM.ToolCall.name(tool_call)
         tool_name_atom = String.to_atom(tool_name)
         current_count = Map.get(counts_acc, tool_name_atom, 0)
