@@ -80,11 +80,8 @@ defmodule BranchedLLM.ToolHandler do
           module()
         ) :: Context.t()
   defp execute_tool_and_add_result(tool, tool_call, args, context, chat_module) do
-    Logger.info("Calling tool '#{tool.name}' with args: #{inspect(args)}")
-
     case chat_module.execute_tool(tool, args) do
       {:ok, result} ->
-        Logger.info("Got this answer: #{result}")
         add_tool_success_result(context, tool_call.id, result)
 
       {:error, reason} ->

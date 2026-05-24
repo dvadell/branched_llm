@@ -7,11 +7,12 @@ defmodule BranchedLLM.Chat do
 
   ## Configuration
 
-      config :branched_llm, ai_model: "openai:gpt-4", base_url: "http://localhost:11434"
+  All configuration is under `:branched_llm` and can be set via environment variables:
 
-  Or configure via `:req_llm`:
-
-      config :req_llm, openai: [base_url: "http://localhost:11434/api"]
+      config :branched_llm,
+        ai_model: System.get_env("LLM_MODEL") || "openai:cara-cpu",
+        base_url: System.get_env("LLM_BASE_URL") || "http://localhost:11434",
+        api_key: System.get_env("NVIDIA_API_KEY") || "ollama"
   """
 
   import ReqLLM.Context
@@ -187,11 +188,22 @@ defmodule BranchedLLM.Chat do
   end
 
   @doc """
-  Returns the default model string.
+  Returns the default model spec as an inline map, bypassing LLMDB catalog lookup.
+  Accepts either `"provider:model"` strings or `%{provider: atom, id: string}` maps.
   """
-  @spec default_model() :: String.t()
+  @spec default_model() :: map() | String.t()
   def default_model do
-    Application.get_env(:branched_llm, :ai_model, "openai:cara-cpu")
+    case Application.get_env(:branched_llm, :ai_model, "openai:cara-cpu") do
+      model when is_binary(model) -> parse_model_string(model)
+      model when is_map(model) -> model
+    end
+  end
+
+  defp parse_model_string(model_string) do
+    case String.split(model_string, ":", parts: 2) do
+      [provider, id] -> %{provider: String.to_atom(provider), id: id}
+      [id] -> %{id: id}
+    end
   end
 
   ## Private Functions
@@ -213,7 +225,7 @@ defmodule BranchedLLM.Chat do
     Context.append(context, assistant(message, opts))
   end
 
-  @spec call_llm(String.t(), Context.t(), list()) ::
+  @spec call_llm(ReqLLM.model_input(), Context.t(), list()) ::
           {:ok, StreamResponse.t(), list()}
           | {:ok, StreamResponse.t(), list(), String.t()}
           | {:error, term()}
@@ -224,13 +236,13 @@ defmodule BranchedLLM.Chat do
   defp do_call_llm(model, context, tools) do
     Logger.info("LLM call_llm starting with context: #{inspect(context)}")
     start_time = :erlang.monotonic_time(:millisecond)
-    %{model_endpoint: model_endpoint} = endpoints()
+
+    %{model_endpoint: model_endpoint, api_key: api_key} = endpoints()
+    llm_opts = [tools: tools, base_url: model_endpoint]
+    llm_opts = if api_key, do: Keyword.put(llm_opts, :api_key, api_key), else: llm_opts
 
     result =
-      case ReqLLM.stream_text(model, context.messages,
-             tools: tools,
-             base_url: model_endpoint
-           ) do
+      case ReqLLM.stream_text(model, context.messages, llm_opts) do
         {:ok, stream_response} ->
           stream_result(stream_response, tools)
 
@@ -241,7 +253,7 @@ defmodule BranchedLLM.Chat do
     end_time = :erlang.monotonic_time(:millisecond)
 
     Logger.info(
-      "LLM call_llm(model: #{model}, tools: #{length(tools)}) took #{end_time - start_time}ms"
+      "LLM call_llm(model: #{inspect(model)}, tools: #{length(tools)}) took #{end_time - start_time}ms"
     )
 
     result
@@ -357,26 +369,18 @@ defmodule BranchedLLM.Chat do
   end
 
   defp endpoints do
-    # First check branched_llm config
     base_url = Application.get_env(:branched_llm, :base_url)
+    api_key = Application.get_env(:branched_llm, :api_key)
 
-    config_url =
-      if base_url do
-        base_url
-      else
-        :req_llm
-        |> Application.get_env(:openai, [])
-        |> Keyword.get(:base_url)
-      end
-
-    uri = URI.parse(config_url)
+    uri = URI.parse(base_url)
     port_str = if uri.port, do: ":#{uri.port}", else: ""
     base_url = "#{uri.scheme}://#{uri.host}#{port_str}"
 
     %{
       base_url: base_url,
       model_endpoint: base_url <> "/v1",
-      health_endpoint: base_url <> "/api/tags"
+      health_endpoint: base_url <> "/api/tags",
+      api_key: api_key
     }
   end
 

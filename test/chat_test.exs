@@ -38,9 +38,11 @@ defmodule BranchedLLM.ChatTest do
   end
 
   describe "default_model/0" do
-    test "returns the configured model" do
+    test "returns the configured model as an inline map" do
       model = Chat.default_model()
-      assert is_binary(model)
+      assert is_map(model)
+      assert model.provider == :openai
+      assert model.id == "cara-cpu"
     end
   end
 end

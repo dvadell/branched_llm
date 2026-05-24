@@ -1,14 +1,6 @@
 import Config
 
 config :branched_llm,
-  ai_model: "openai:cara-cpu",
-  base_url: "http://host.docker.internal:11434"
-
-# ReqLLM expects configuration for its adapters
-# You can also set the OPENAI_API_KEY environment variable
-config :req_llm,
-  openai: [
-    api_key: "ollama"
-  ],
-  # Some versions of ReqLLM might expect a flat key as well
-  openai_api_key: "ollama"
+  ai_model: System.get_env("LLM_MODEL") || "openai:cara-cpu",
+  base_url: System.get_env("LLM_BASE_URL") || "http://host.docker.internal:11434",
+  api_key: System.get_env("NVIDIA_API_KEY") || "ollama"
