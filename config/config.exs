@@ -7,4 +7,4 @@ config :req_llm,
     base_url: System.get_env("LLM_BASE_URL")
   ],
   openai_api_key: System.get_env("NVIDIA_API_KEY"),
-  model: "openai:z-ai/glm-5.1"
+  model: System.get_env("LLM_MODEL")

@@ -17,10 +17,10 @@ defmodule BranchedLLM.OrchestratorStructuredOutputTest do
     Context.new([Context.system("System")])
   end
 
-  defp stream_response(tokens) do
+  defp stream_response(tokens, metadata \\ %{}) do
     stream = Stream.map(tokens, &%{text: &1, type: :content})
 
-    {:ok, metadata_handle} = MetadataHandle.start_link(fn -> %{} end)
+    {:ok, metadata_handle} = MetadataHandle.start_link(fn -> metadata end)
 
     %ReqLLM.StreamResponse{
       stream: stream,
@@ -945,4 +945,48 @@ defmodule BranchedLLM.OrchestratorStructuredOutputTest do
       assert :ok == :ok
     end
   end
+
+  describe "run/1 with schema - llm_metadata emission" do
+    test "emits llm_metadata during schema retry with ContentResult" do
+      schema = %{
+        "type" => "object",
+        "properties" => %{"name" => %{"type" => "string"}},
+        "required" => ["name"]
+      }
+
+      invalid_json = ~s({"wrong": "field"})
+      metadata = %{usage: %{input_tokens: 5, output_tokens: 10}}
+
+      stub(BranchedLLM.ChatMock, :default_model, fn -> "openai:gpt-4" end)
+
+      # First call returns invalid content with metadata
+      expect(BranchedLLM.ChatMock, :send_message_stream, 1, fn _ctx, _opts ->
+        {:ok, %ContentResult{stream: stream_response([invalid_json], metadata)}}
+      end)
+
+      # Retry returns valid
+      expect(BranchedLLM.ChatMock, :send_message_stream, 1, fn _ctx, _opts ->
+        {:ok, %ContentResult{stream: stream_response([~s({"name": "Retry"})], %{})}}
+      end)
+
+      pid = self()
+
+      params = %{
+        llm_context: make_context(),
+        on_event: fn event -> send(pid, event) end,
+        llm_tools: [],
+        chat_mod: BranchedLLM.ChatMock,
+        tool_usage_counts: %{},
+        branch_id: "main",
+        schema: schema,
+        schema_max_retries: 2
+      }
+
+      {:ok, _task_pid} = ChatOrchestrator.run(params)
+
+      assert_receive {:llm_metadata, "main", ^metadata}, 500
+      assert_receive {:llm_end, "main", %{"name" => "Retry"}}, 2000
+    end
+  end
+
 end

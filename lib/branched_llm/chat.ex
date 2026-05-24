@@ -347,8 +347,9 @@ defmodule BranchedLLM.Chat do
         {:ok,
          %ToolCallResult{
            tool_calls: tool_calls,
-           context: stream_response.context
-         }}
+           context: stream_response.context,
+          metadata_handle: stream_response.metadata_handle
+        }}
 
       {:content, consumed_chunks, remaining_stream} ->
         # It's content (text). Prepend the chunks we took and return as a normal stream.

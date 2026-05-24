@@ -2,8 +2,9 @@ defmodule BranchedLLM.ChatOrchestrator do
   @moduledoc """
   Orchestrates the LLM request/response lifecycle, including tool calls and streaming.
 
-  This module is **domain-agnostic** — it knows nothing about education, students, or teachers.
-  It communicates with a caller process (e.g., a LiveView) via a well-defined message protocol.
+  This module is **domain-agnostic** — it knows nothing about education, students,
+  or teachers. It communicates with a caller process (e.g., a LiveView) via a
+  well-defined message protocol.
 
   ## Message Protocol
 
@@ -11,29 +12,34 @@ defmodule BranchedLLM.ChatOrchestrator do
   typically to the caller pid:
 
   * `{:llm_chunk, branch_id, chunk}` — A streaming text chunk from the LLM
-  * `{:llm_end, branch_id, full_text}` — The stream is complete; `full_text` is the full
-    accumulated text of the assistant's response. When `schema:` is provided, the third
-    element is the validated Elixir map instead of the raw text.
-  * `{:llm_status, branch_id, status}` — A status update (e.g., "Thinking...", "Using calculator...")
-  * `{:llm_error, branch_id, error_message}` — An error occurred during the LLM request.
-    When schema validation fails after all retries, `error_message` is a
+  * `{:llm_end, branch_id, full_text}` — The stream is complete; `full_text` is the
+    full accumulated text of the assistant's response. When `schema:` is provided,
+    the third element is the validated Elixir map instead of the raw text.
+  * `{:llm_status, branch_id, status}` — A status update (e.g., "Thinking...",
+    "Using calculator...")
+  * `{:llm_error, branch_id, error_message}` — An error occurred during the LLM
+    request. When schema validation fails after all retries, `error_message` is a
     `%BranchedLLM.StructuredOutput.ValidationError{}` struct.
-  * `{:update_tool_usage_counts, counts}` — Updated tool usage counts for the caller to track
+  * `{:llm_metadata, branch_id, metadata}` — Token-usage and other metadata from
+    the LLM provider (e.g., `%{usage: %{input_tokens: N, output_tokens: N}}`).
+    Emitted as soon as the metadata is available; no ordering guarantee relative
+    to other events.
+  * `{:update_tool_usage_counts, counts}` — Updated tool usage counts for the
+    caller to track
 
-  The caller may also send messages back (e.g., to cancel a task), but those are handled
-  externally via the `active_task` PID in `BranchedChat`.
+  The caller may also send messages back (e.g., to cancel a task), but those are
+  handled externally via the `active_task` PID in `BranchedChat`.
 
   ## Structured Output
 
-  When `schema:` is provided in the params, the orchestrator validates the LLM response
-  against the schema and retries on failure (up to `schema_max_retries` times, default 2).
-  On success, `:llm_end` carries the validated map. On exhaustion, `:llm_error` carries
-  a `ValidationError` struct.
+  When `schema:` is provided in the params, the orchestrator validates the LLM
+  response against the schema and retries on failure (up to `schema_max_retries`
+  times, default 2). On success, `:llm_end` carries the validated map. On
+  exhaustion, `:llm_error` carries a `ValidationError` struct.
 
   ## Example
 
       caller_pid = self()
-
       params = %{
         llm_context: context,
         on_event: fn event -> send(caller_pid, event) end,
@@ -64,6 +70,7 @@ defmodule BranchedLLM.ChatOrchestrator do
   alias BranchedLLM.StructuredOutput.ValidationError
   alias BranchedLLM.StructuredOutput.Validator
   alias BranchedLLM.ToolHandler
+
   alias ReqLLM.Context
   alias ReqLLM.StreamResponse.MetadataHandle
 
@@ -91,12 +98,9 @@ defmodule BranchedLLM.ChatOrchestrator do
       result =
         retry with: constant_backoff(100) |> Stream.take(10) do
           case process_llm_request(params) do
-            :ok ->
-              :ok
-
-            {:error, reason} ->
-              params.on_event.({:llm_status, params.branch_id, "Retrying..."})
-              {:error, reason}
+            :ok -> :ok
+            {:error, reason} -> params.on_event.({:llm_status, params.branch_id, "Retrying..."})
+            {:error, reason}
           end
         after
           result -> result
@@ -113,11 +117,7 @@ defmodule BranchedLLM.ChatOrchestrator do
 
   @spec process_llm_request(llm_call_params()) :: :ok | {:error, String.t()}
   defp process_llm_request(
-         %{
-           llm_context: llm_context,
-           on_event: _event_fn,
-           chat_mod: chat_mod
-         } = llm_call_params
+         %{llm_context: llm_context, on_event: _event_fn, chat_mod: chat_mod} = llm_call_params
        ) do
     stream_opts = build_stream_opts(llm_call_params)
 
@@ -173,11 +173,11 @@ defmodule BranchedLLM.ChatOrchestrator do
     chat_mod.default_model()
   end
 
-  @spec handle_content_result(ContentResult.t(), llm_call_params()) :: :ok | {:error, String.t()}
+  @spec handle_content_result(ContentResult.t(), llm_call_params()) ::
+          :ok | {:error, String.t()}
   defp handle_content_result(
          %ContentResult{stream: stream_response},
-         %{on_event: on_event_fn, branch_id: branch_id} =
-           llm_call_params
+         %{on_event: on_event_fn, branch_id: branch_id} = llm_call_params
        ) do
     tool_usage_counts = Map.get(llm_call_params, :tool_usage_counts, %{})
     schema = Map.get(llm_call_params, :schema)
@@ -199,17 +199,21 @@ defmodule BranchedLLM.ChatOrchestrator do
   @spec handle_structured_output_tool_call(ToolCallResult.t(), llm_call_params()) ::
           :ok | {:error, String.t()}
   defp handle_structured_output_tool_call(
-         %ToolCallResult{tool_calls: tool_calls},
+         %ToolCallResult{tool_calls: tool_calls, metadata_handle: metadata_handle},
          llm_call_params
        ) do
+    emit_metadata(llm_call_params, metadata_handle)
+
     synthetic_name = Enforcer.structured_output_tool_name()
 
     tool_call = Enum.find(tool_calls, &ReqLLM.ToolCall.matches_name?(&1, synthetic_name))
     args = ReqLLM.ToolCall.args_map(tool_call) || %{}
+
     validate_structured_output_args(args, llm_call_params)
   end
 
-  @spec validate_structured_output_args(map(), llm_call_params()) :: :ok | {:error, String.t()}
+  @spec validate_structured_output_args(map(), llm_call_params()) ::
+          :ok | {:error, String.t()}
   defp validate_structured_output_args(
          args,
          %{on_event: on_event_fn, branch_id: branch_id} = llm_call_params
@@ -249,9 +253,11 @@ defmodule BranchedLLM.ChatOrchestrator do
   @spec handle_tool_call_result(ToolCallResult.t(), llm_call_params()) ::
           :ok | {:error, String.t()}
   defp handle_tool_call_result(
-         %ToolCallResult{tool_calls: tool_calls, context: context},
+         %ToolCallResult{tool_calls: tool_calls, context: context, metadata_handle: metadata_handle},
          llm_call_params
        ) do
+    emit_metadata(llm_call_params, metadata_handle)
+
     updated_llm_call_params = %{llm_call_params | llm_context: context}
     next_llm_call_params = handle_tool_call_execution(tool_calls, updated_llm_call_params)
     process_llm_request(next_llm_call_params)
@@ -269,12 +275,14 @@ defmodule BranchedLLM.ChatOrchestrator do
        ) do
     llm_tools = Map.get(llm_call_params, :llm_tools, [])
     tool_usage_counts = Map.get(llm_call_params, :tool_usage_counts, %{})
+
     tool_names = Enum.map_join(tool_calls, ", ", &ReqLLM.ToolCall.name/1)
     on_event_fn.({:llm_status, branch_id, "Using #{tool_names}..."})
 
     {tool_calls_to_execute, tool_results_for_limited_tools, new_tool_usage_counts} =
       Enum.reduce(tool_calls, {[], [], tool_usage_counts}, fn tool_call,
-                                                              {exec_acc, limited_acc, counts_acc} ->
+                                                              {exec_acc, limited_acc,
+                                                               counts_acc} ->
         tool_name = ReqLLM.ToolCall.name(tool_call)
         tool_name_atom = String.to_atom(tool_name)
         current_count = Map.get(counts_acc, tool_name_atom, 0)
@@ -284,7 +292,10 @@ defmodule BranchedLLM.ChatOrchestrator do
            Map.put(counts_acc, tool_name_atom, current_count + 1)}
         else
           tool_result =
-            Context.tool_result(tool_call.id, "Tool limit reached. Summarize with what you have")
+            Context.tool_result(
+              tool_call.id,
+              "Tool limit reached. Summarize with what you have"
+            )
 
           {exec_acc, [tool_result | limited_acc], counts_acc}
         end
@@ -349,10 +360,27 @@ defmodule BranchedLLM.ChatOrchestrator do
     end_time = :erlang.monotonic_time(:millisecond)
     Logger.info("LLM streaming of answer took #{end_time - start_time}ms")
 
-    metadata = MetadataHandle.await(stream_response.metadata_handle)
-    Logger.info("LLM stream complete metadata: #{inspect(metadata)}")
+    emit_metadata_from_handle(on_event_fn, branch_id, stream_response.metadata_handle)
 
     {sent_any_chunks, full_text}
+  end
+
+  # --- Metadata Emission ---
+
+  @spec emit_metadata(llm_call_params(), pid() | nil) :: :ok
+  defp emit_metadata(%{on_event: on_event_fn, branch_id: branch_id}, metadata_handle)
+       when is_pid(metadata_handle) do
+    emit_metadata_from_handle(on_event_fn, branch_id, metadata_handle)
+  end
+
+  defp emit_metadata(_llm_call_params, nil), do: :ok
+
+  @spec emit_metadata_from_handle(fun(), String.t(), pid()) :: :ok
+  defp emit_metadata_from_handle(on_event_fn, branch_id, metadata_handle) do
+    metadata = MetadataHandle.await(metadata_handle)
+    Logger.info("LLM stream complete metadata: #{inspect(metadata)}")
+    on_event_fn.({:llm_metadata, branch_id, metadata})
+    :ok
   end
 
   # --- Schema Validation & Retry ---
@@ -427,9 +455,9 @@ defmodule BranchedLLM.ChatOrchestrator do
           attempt
         )
 
-      {:ok, %ToolCallResult{tool_calls: tool_calls}} ->
+      {:ok, %ToolCallResult{tool_calls: _tool_calls} = result} ->
         retry_handle_tool_call_result(
-          tool_calls,
+          result,
           last_response,
           error,
           llm_call_params,
@@ -510,7 +538,7 @@ defmodule BranchedLLM.ChatOrchestrator do
   end
 
   @spec retry_handle_tool_call_result(
-          list(),
+          ToolCallResult.t(),
           String.t() | map(),
           ValidationError.t(),
           llm_call_params(),
@@ -518,13 +546,15 @@ defmodule BranchedLLM.ChatOrchestrator do
           non_neg_integer()
         ) :: :ok | {:error, String.t()}
   defp retry_handle_tool_call_result(
-         tool_calls,
+         %ToolCallResult{tool_calls: tool_calls, metadata_handle: metadata_handle},
          last_response,
          error,
          llm_call_params,
          max_retries,
          attempt
        ) do
+    emit_metadata(llm_call_params, metadata_handle)
+
     if structured_output_tool_call?(tool_calls) do
       retry_handle_structured_output(
         tool_calls,
@@ -562,6 +592,7 @@ defmodule BranchedLLM.ChatOrchestrator do
          attempt
        ) do
     %{on_event: on_event_fn, branch_id: branch_id, schema: schema} = llm_call_params
+
     synthetic_name = Enforcer.structured_output_tool_name()
 
     tool_call = Enum.find(tool_calls, &ReqLLM.ToolCall.matches_name?(&1, synthetic_name))

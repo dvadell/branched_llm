@@ -8,15 +8,15 @@ defmodule BranchedLLM.LLM.StreamResult do
 
   ## Variants
 
-    * `%ContentResult{}` — The LLM is streaming text content.
-    * `%ToolCallResult{}` — The LLM is invoking one or more tools.
-    * `%EmptyResult{}` — The LLM returned neither content nor tool calls.
-    * `%ErrorResult{}` — The LLM call failed.
+  * `%ContentResult{}` — The LLM is streaming text content.
+  * `%ToolCallResult{}` — The LLM is invoking one or more tools.
+  * `%EmptyResult{}` — The LLM returned neither content nor tool calls.
+  * `%ErrorResult{}` — The LLM call failed.
 
   ## Usage
 
-  The `ChatOrchestrator` pattern-matches on the struct type to decide how
-  to proceed, rather than checking whether a `tool_calls` list is empty:
+  The `ChatOrchestrator` pattern-matches on the struct type to decide how to
+  proceed, rather than checking whether a `tool_calls` list is empty:
 
       case result do
         %ContentResult{} -> process_stream(result.stream, ...)
@@ -32,8 +32,10 @@ defmodule BranchedLLM.LLM.StreamResult do
 
   defmodule ContentResult do
     @moduledoc """
-    The LLM is streaming text content. The `stream` field is a live
-    `StreamResponse` that can be iterated for token-by-token output.
+    The LLM is streaming text content.
+
+    The `stream` field is a live `StreamResponse` that can be iterated for
+    token-by-token output.
     """
 
     defstruct [:stream]
@@ -45,16 +47,21 @@ defmodule BranchedLLM.LLM.StreamResult do
 
   defmodule ToolCallResult do
     @moduledoc """
-    The LLM is invoking one or more tools. The `context` field carries
-    the `ReqLLM.Context` from the original stream response (needed to
-    append tool-call messages before the recursive LLM call).
+    The LLM is invoking one or more tools.
+
+    The `context` field carries the `ReqLLM.Context` from the original stream
+    response (needed to append tool-call messages before the recursive LLM call).
+
+    The `metadata_handle` field carries the `ReqLLM.StreamResponse.MetadataHandle`
+    pid from the stream, so token-usage metadata is not lost on tool-call turns.
     """
 
-    defstruct [:tool_calls, :context]
+    defstruct [:tool_calls, :context, :metadata_handle]
 
     @type t :: %__MODULE__{
             tool_calls: list(ToolCall.t()),
-            context: Context.t()
+            context: Context.t(),
+            metadata_handle: pid() | nil
           }
   end
 

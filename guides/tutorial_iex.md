@@ -83,8 +83,36 @@ You'll see the response appear token-by-token in your terminal. The function ret
 | `{:llm_chunk, branch_id, text}` | Streaming text chunk |
 | `{:llm_end, branch_id, full_text}` | Stream complete |
 | `{:llm_status, branch_id, status}` | Status update (e.g., `"Using calculator..."`) |
+| `{:llm_metadata, branch_id, metadata}` | Token-usage & provider metadata (e.g., `%{usage: %{input_tokens: N, output_tokens: N}}`) |
 | `{:llm_error, branch_id, error}` | Error during the request |
 | `{:update_tool_usage_counts, counts}` | Tool invocation counts (for rate limiting) |
+
+### Capturing Metadata
+
+The `:llm_metadata` event fires as soon as the provider's usage data is available — no ordering guarantee relative to other events. A common pattern is to capture it in the callback:
+
+```elixir
+metadata = nil
+
+{:ok, _pid} = ChatOrchestrator.run(%{
+  llm_context: context,
+  on_event: fn
+    {:llm_metadata, _id, meta} ->
+      Process.put(:llm_metadata, meta)
+    {:llm_chunk, _id, chunk} ->
+      IO.write(chunk)
+    {:llm_end, _id, _text} ->
+      IO.puts("\n[Done]")
+    _ -> :ok
+  end,
+  chat_mod: Chat,
+  branch_id: "main"
+})
+
+# Retrieve after the stream completes
+Process.get(:llm_metadata)
+#=> %{usage: %{input_tokens: 42, output_tokens: 87}}
+```
 
 ---
 
