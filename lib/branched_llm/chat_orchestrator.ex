@@ -13,6 +13,7 @@ defmodule BranchedLLM.ChatOrchestrator do
     * `{:llm_chunk, branch_id, chunk}` — A streaming text chunk from the LLM
     * `{:llm_end, branch_id, context_builder}` — The stream is complete; `context_builder` is a function `(String.t() -> ReqLLM.Context.t())` that builds the final context
     * `{:llm_status, branch_id, status}` — A status update (e.g., "Thinking...", "Using calculator...")
+    * `{:llm_tool_called, branch_id, tool_call}` — The LLM requested a tool call; `tool_call` is a map with `:id`, `:name`, and `:arguments` keys
     * `{:llm_error, branch_id, error_message}` — An error occurred during the LLM request
     * `{:update_tool_usage_counts, counts}` — Updated tool usage counts for the caller to track
 
@@ -201,6 +202,10 @@ defmodule BranchedLLM.ChatOrchestrator do
            branch_id: branch_id
          } = llm_call_params
        ) do
+    Enum.each(tool_calls, fn tool_call ->
+      on_event_fn.({:llm_tool_called, branch_id, ReqLLM.ToolCall.to_map(tool_call)})
+    end)
+
     tool_names = Enum.map_join(tool_calls, ", ", &ReqLLM.ToolCall.name/1)
     on_event_fn.({:llm_status, branch_id, "Using #{tool_names}..."})
 

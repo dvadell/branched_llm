@@ -205,6 +205,7 @@ params = %{
   llm_context: context,
   on_event: fn
     {:llm_chunk, _id, chunk} -> IO.write(if is_map(chunk), do: chunk.text, else: chunk)
+    {:llm_tool_called, _id, %{name: name, arguments: args}} -> IO.puts("\n[Tool called: #{name}(#{inspect(args)})]")
     {:llm_status, _id, status} -> IO.puts("\n[Status: #{status}]")
     {:llm_end, _id, _builder} -> IO.puts("\n[Stream Complete]")
     {:llm_error, _id, err} -> IO.puts("\n[Error: #{err}]")
