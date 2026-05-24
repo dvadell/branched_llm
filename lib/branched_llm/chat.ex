@@ -7,26 +7,22 @@ defmodule BranchedLLM.Chat do
 
   ## Configuration
 
-      config :branched_llm,
-        ai_model: "openai:gpt-4",
-        base_url: "http://localhost:11434"
+      config :branched_llm, ai_model: "openai:gpt-4", base_url: "http://localhost:11434"
 
   Or configure via `:req_llm`:
 
-      config :req_llm,
-        openai: [base_url: "http://localhost:11434/api"]
-
+      config :req_llm, openai: [base_url: "http://localhost:11434/api"]
   """
+
   import ReqLLM.Context
 
   require Logger
 
-  alias BranchedLLM.LLM.StreamParser
   alias ReqLLM.Context
   alias ReqLLM.StreamResponse
-  alias ReqLLM.StreamResponse.MetadataHandle
 
   @behaviour BranchedLLM.ChatBehaviour
+
   @type stream_chunk :: %{type: atom(), text: String.t()}
 
   ## Public API
@@ -50,14 +46,22 @@ defmodule BranchedLLM.Chat do
           {:ok, String.t(), Context.t()} | {:error, term()}
   def send_message(message, context, opts \\ []) do
     config = build_config(opts)
+
     parent = self()
     ref = make_ref()
 
     on_event = fn
-      {:llm_chunk, _id, chunk} -> send(parent, {ref, :chunk, chunk})
-      {:llm_end, _id, builder} -> send(parent, {ref, :end, builder})
-      {:llm_error, _id, err} -> send(parent, {ref, :error, err})
-      _ -> :ok
+      {:llm_chunk, _id, chunk} ->
+        send(parent, {ref, :chunk, chunk})
+
+      {:llm_end, _id, builder} ->
+        send(parent, {ref, :end, builder})
+
+      {:llm_error, _id, err} ->
+        send(parent, {ref, :error, err})
+
+      _ ->
+        :ok
     end
 
     params = %{
@@ -93,6 +97,7 @@ defmodule BranchedLLM.Chat do
   @doc """
   Sends a message and returns a stream of text chunks plus the updated context,
   and any tool calls made by the LLM.
+
   Perfect for web interfaces that need to stream responses to users and handle tools.
 
   ## Examples
@@ -103,7 +108,7 @@ defmodule BranchedLLM.Chat do
 
   ## Returns
 
-    * `{:ok, stream, context_builder_fn, tool_calls}` - Stream of text chunks, a function to build final context, and a list of tool calls
+    * `{:ok, stream, context_builder_fn, tool_calls, pre_consumed_text}` - Stream of text chunks, a function to build final context, a list of tool calls, and pre-consumed text (nil when stream is still live, or the full text when classify/1 already consumed the stream)
 
   ## Options
 
@@ -112,7 +117,8 @@ defmodule BranchedLLM.Chat do
   """
   @impl true
   @spec send_message_stream(String.t(), Context.t(), keyword()) ::
-          {:ok, ReqLLM.StreamResponse.t(), (String.t() -> Context.t()), list()} | {:error, term()}
+          {:ok, ReqLLM.StreamResponse.t(), (String.t() -> Context.t()), list(), String.t() | nil}
+          | {:error, term()}
   def send_message_stream(message, context, opts \\ []) do
     config = build_config(opts)
 
@@ -126,7 +132,11 @@ defmodule BranchedLLM.Chat do
     case call_llm(config.model, updated_context, config.tools) do
       {:ok, stream_response, tool_calls} ->
         context_builder = fn final_text -> add_assistant_message(updated_context, final_text) end
-        {:ok, stream_response, context_builder, tool_calls}
+        {:ok, stream_response, context_builder, tool_calls, nil}
+
+      {:ok, stream_response, [], text} ->
+        context_builder = fn _final_text -> add_assistant_message(updated_context, text) end
+        {:ok, stream_response, context_builder, [], text}
 
       {:error, reason} ->
         {:error, reason}
@@ -139,7 +149,6 @@ defmodule BranchedLLM.Chat do
   ## Examples
 
       iex> context = BranchedLLM.Chat.new_context("You are a helpful coding assistant")
-
   """
   @impl true
   @spec new_context(String.t()) :: Context.t()
@@ -205,7 +214,9 @@ defmodule BranchedLLM.Chat do
   end
 
   @spec call_llm(String.t(), Context.t(), list()) ::
-          {:ok, StreamResponse.t(), list()} | {:error, term()}
+          {:ok, StreamResponse.t(), list()}
+          | {:ok, StreamResponse.t(), list(), String.t()}
+          | {:error, term()}
   defp call_llm(model, context, tools) do
     do_call_llm(model, context, tools)
   end
@@ -213,11 +224,13 @@ defmodule BranchedLLM.Chat do
   defp do_call_llm(model, context, tools) do
     Logger.info("LLM call_llm starting with context: #{inspect(context)}")
     start_time = :erlang.monotonic_time(:millisecond)
-
     %{model_endpoint: model_endpoint} = endpoints()
 
     result =
-      case ReqLLM.stream_text(model, context.messages, tools: tools, base_url: model_endpoint) do
+      case ReqLLM.stream_text(model, context.messages,
+             tools: tools,
+             base_url: model_endpoint
+           ) do
         {:ok, stream_response} ->
           stream_result(stream_response, tools)
 
@@ -237,47 +250,32 @@ defmodule BranchedLLM.Chat do
   defp stream_result(stream_response, []), do: {:ok, stream_response, []}
   defp stream_result(stream_response, _tools), do: handle_stream_for_tools(stream_response)
 
-  # Peeks at the stream to see if the LLM is calling a tool or just talking.
-  defp handle_stream_for_tools(%StreamResponse{stream: stream} = stream_response) do
-    # We take chunks until we see a tool call or content with text.
-    case StreamParser.consume_until_intent(stream) do
-      {:tool_call, consumed_chunks, remaining_stream} ->
-        # It's a tool call! Consume the whole stream to get all arguments.
-        all_chunks = consumed_chunks ++ Enum.to_list(remaining_stream)
-        tool_calls = StreamParser.extract_tool_calls(all_chunks)
+  # Uses ReqLLM's classify/1 to determine if the stream contains tool calls or content.
+  # This replaces the old consume_until_intent approach which broke with the v1.11.0
+  # Stream.resource-based lazy stream (halting mid-stream killed the StreamServer).
+  # classify/1 consumes the stream; when the response is a final answer, the text
+  # is returned alongside the stream_response so the orchestrator can emit it directly.
+  defp handle_stream_for_tools(stream_response) do
+    case StreamResponse.classify(stream_response) do
+      %{type: :tool_calls, tool_calls: tool_call_maps} ->
+        tool_calls = Enum.map(tool_call_maps, &map_to_tool_call/1)
+        {:ok, stream_response, tool_calls}
 
-        # We need to provide a dummy stream because the original one is consumed
-        {:ok, dummy_stream_response(stream_response), tool_calls}
-
-      {:content, consumed_chunks, remaining_stream} ->
-        # It's content (text). Prepend the chunks we took and return as a normal stream.
-        new_stream = Stream.concat(consumed_chunks, remaining_stream)
-        {:ok, %{stream_response | stream: new_stream}, []}
-
-      {:empty, _consumed_chunks} ->
-        # Empty stream
-        {:ok, stream_response, []}
+      %{type: :final_answer, text: text} ->
+        {:ok, stream_response, [], text}
     end
   rescue
     e -> {:error, e}
   end
 
-  defp dummy_stream_response(%StreamResponse{context: context, model: model}) do
-    {:ok, metadata_handle} = MetadataHandle.start_link(fn -> %{} end)
-
-    %StreamResponse{
-      stream: [%ReqLLM.StreamChunk{type: :content, text: ""}],
-      context: context,
-      model: model,
-      cancel: fn -> :ok end,
-      metadata_handle: metadata_handle
-    }
+  defp map_to_tool_call(%{id: id, name: name, arguments: args}) do
+    ReqLLM.ToolCall.new(id, name, Jason.encode!(args))
   end
 
   @doc """
   Executes a given tool with the provided arguments.
-  Uses a caching layer to retrieve previous successful results.
 
+  Uses a caching layer to retrieve previous successful results.
   The cache module can be configured via:
 
       config :branched_llm, tool_cache: MyApp.ToolCache
@@ -285,10 +283,10 @@ defmodule BranchedLLM.Chat do
   Or passed directly via opts:
 
       BranchedLLM.Chat.execute_tool(tool, args, cache: MyApp.ToolCache)
-
   """
   @impl true
-  @spec execute_tool(ReqLLM.Tool.t(), map(), keyword()) :: {:ok, term()} | {:error, term()}
+  @spec execute_tool(ReqLLM.Tool.t(), map(), keyword()) ::
+          {:ok, term()} | {:error, term()}
   def execute_tool(tool, args, opts \\ []) do
     cache_module = Keyword.get(opts, :cache, default_tool_cache())
 
@@ -302,9 +300,11 @@ defmodule BranchedLLM.Chat do
       {:ok, result} ->
         Logger.info("Tool '#{tool.name}' result retrieved from cache.")
 
-        :telemetry.execute([:branched_llm, :ai, :tool, :cache, :hit], %{count: 1}, %{
-          tool: tool.name
-        })
+        :telemetry.execute(
+          [:branched_llm, :ai, :tool, :cache, :hit],
+          %{count: 1},
+          %{tool: tool.name}
+        )
 
         {:ok, result}
 
@@ -334,7 +334,6 @@ defmodule BranchedLLM.Chat do
   @impl true
   def health_check do
     %{health_endpoint: health_endpoint} = endpoints()
-
     Logger.info("Checking AI health at: #{health_endpoint}")
 
     case Req.new(
@@ -383,14 +382,11 @@ defmodule BranchedLLM.Chat do
 
   # OpenTelemetry helpers
   # Compile-time branching: when :otel_tracer is loaded, spans are created.
-
   if Code.ensure_loaded?(OpenTelemetry.Tracer) do
     require OpenTelemetry.Tracer
 
     defp maybe_with_span(name, _attrs, fun) do
-      OpenTelemetry.Tracer.with_span name do
-        fun.()
-      end
+      OpenTelemetry.Tracer.with_span(name, do: fun.())
     end
   else
     defp maybe_with_span(_name, _attrs, fun), do: fun.()

@@ -1,6 +1,5 @@
 defmodule BranchedLLMTest do
   use ExUnit.Case, async: false
-
   import Mox
 
   alias BranchedLLM.BranchedChat
@@ -12,7 +11,6 @@ defmodule BranchedLLMTest do
   describe "new_chat/3" do
     test "creates a BranchedChat using the convenience function" do
       ctx = Context.new([Context.system("test")])
-
       chat = BranchedLLM.new_chat(BranchedLLM.ChatMock, [], ctx)
 
       assert %BranchedChat{} = chat
@@ -36,7 +34,7 @@ defmodule BranchedLLMTest do
            model: "mock",
            cancel: fn -> :ok end,
            metadata_handle: metadata_handle
-         }, fn t -> Context.new([Context.assistant(t)]) end, []}
+         }, fn t -> Context.new([Context.assistant(t)]) end, [], nil}
       end)
 
       test_pid = self()
