@@ -37,7 +37,7 @@ defmodule BranchedLLM.MixProject do
 
   defp deps do
     [
-      {:req_llm, "~> 1.11.0"},
+      {:req_llm, "~> 1.12.0"},
       {:ecto, "~> 3.13", optional: true},
       {:jason, "~> 1.2"},
       {:retry, "~> 0.18"},
