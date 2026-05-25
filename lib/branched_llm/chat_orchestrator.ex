@@ -10,13 +10,14 @@ defmodule BranchedLLM.ChatOrchestrator do
   The orchestrator sends the following messages through the `on_event` function,
   typically to the caller pid:
 
-    * `{:llm_chunk, branch_id, chunk}` — A streaming text chunk from the LLM
-    * `{:llm_end, branch_id, context_builder}` — The stream is complete; `context_builder` is a
-      function `(String.t() -> ReqLLM.Context.t())` that builds the final context
-    * `{:llm_status, branch_id, status}` — A status update (e.g., "Thinking...", "Using calculator...")
-    * `{:llm_error, branch_id, error_message}` — An error occurred during the LLM request
-  * `{:llm_tool_called, branch_id, tool_call}` — The LLM requested a tool call; `tool_call` is a map with `:id`, `:name`, and `:arguments` keys
-    * `{:update_tool_usage_counts, counts}` — Updated tool usage counts for the caller to track
+  * `{:llm_chunk, branch_id, chunk}` — A streaming text chunk from the LLM
+  * `{:llm_end, branch_id, context_builder}` — The stream is complete; `context_builder`
+    is a function `(String.t() -> ReqLLM.Context.t())` that builds the final context
+  * `{:llm_status, branch_id, status}` — A status update (e.g., "Thinking...", "Using calculator...")
+  * `{:llm_error, branch_id, error_message}` — An error occurred during the LLM request
+  * `{:llm_tool_called, branch_id, tool_call}` — The LLM requested a tool call; `tool_call`
+    is a map with `:id`, `:name`, and `:arguments` keys
+  * `{:update_tool_usage_counts, counts}` — Updated tool usage counts for the caller to track
 
   The caller may also send messages back (e.g., to cancel a task), but those are handled
   externally via the `active_task` PID in `BranchedChat`.
@@ -39,6 +40,7 @@ defmodule BranchedLLM.ChatOrchestrator do
   """
 
   use Retry
+
   require Logger
 
   alias BranchedLLM.LLM.StreamResult.{ContentResult, EmptyResult, ToolCallResult}
@@ -61,6 +63,7 @@ defmodule BranchedLLM.ChatOrchestrator do
 
   @doc """
   Starts the LLM request process in a separate task.
+
   The task communicates with the caller via messages defined in the module doc.
   """
   @spec run(llm_call_params()) :: {:ok, pid()}
@@ -91,155 +94,32 @@ defmodule BranchedLLM.ChatOrchestrator do
 
   @spec process_llm_request(llm_call_params()) :: :ok | {:error, String.t()}
   defp process_llm_request(
-         %{
-           message: message,
-           llm_context: llm_context,
-           on_event: _event_fn,
-           llm_tools: llm_tools,
-           chat_mod: chat_mod
-         } = llm_call_params
+         %{message: message, llm_context: llm_context, llm_tools: llm_tools, chat_mod: chat_mod} =
+           llm_call_params
        ) do
-    case chat_mod.send_message_stream(message, llm_context, tools: llm_tools) do
-      {:ok, %ContentResult{} = result} ->
-        handle_content_result(result, llm_call_params)
-
-      {:ok, %ToolCallResult{} = result} ->
-        handle_tool_call_result(result, llm_call_params)
-
-      {:ok, %EmptyResult{}} ->
-        {:error, "The AI did not return a response. Please try again."}
-
-      {:error, reason} ->
-        {:error, "Error: #{inspect(reason)}"}
-    end
+    chat_mod.send_message_stream(message, llm_context, tools: llm_tools)
+    |> dispatch(llm_call_params)
   rescue
     exception -> {:error, LLMErrorFormatter.format(exception)}
   end
 
-  @spec handle_content_result(ContentResult.t(), llm_call_params()) :: :ok | {:error, String.t()}
-  defp handle_content_result(
-         %ContentResult{stream: stream_response, context_builder: llm_context_builder},
-         %{
-           on_event: on_event_fn,
-           tool_usage_counts: tool_usage_counts,
-           branch_id: branch_id
-         }
+  # Each dispatch clause handles one LLM intent, with all event emissions
+  # local and explicit. Pattern matching decides which branch runs.
+
+  @spec dispatch({:ok, ContentResult.t()}, llm_call_params()) :: :ok | {:error, String.t()}
+  defp dispatch(
+         {:ok, %ContentResult{stream: stream_response, context_builder: context_builder}},
+         %{on_event: on_event, tool_usage_counts: tool_usage_counts, branch_id: branch_id}
        ) do
-    if process_stream(
-         stream_response,
-         on_event_fn,
-         llm_context_builder,
-         tool_usage_counts,
-         branch_id
-       ) do
-      :ok
-    else
-      {:error, "The AI did not return a response. Please try again."}
-    end
-  end
+    on_event.({:update_tool_usage_counts, tool_usage_counts})
 
-  @spec handle_tool_call_result(ToolCallResult.t(), llm_call_params()) ::
-          :ok | {:error, String.t()}
-  defp handle_tool_call_result(
-         %ToolCallResult{tool_calls: tool_calls, context: context},
-         llm_call_params
-       ) do
-    updated_llm_call_params = %{llm_call_params | llm_context: context}
-    next_llm_call_params = handle_tool_call_execution(tool_calls, updated_llm_call_params)
-    process_llm_request(%{next_llm_call_params | message: ""})
-  end
-
-  @spec handle_tool_call_execution(list(), llm_call_params()) :: llm_call_params()
-  defp handle_tool_call_execution(
-         tool_calls,
-         %{
-           llm_context: llm_context,
-           llm_tools: llm_tools,
-           chat_mod: chat_mod,
-           tool_usage_counts: tool_usage_counts,
-           on_event: on_event_fn,
-           branch_id: branch_id
-         } = llm_call_params
-       ) do
-    Enum.each(tool_calls, fn tool_call ->
-      on_event_fn.({:llm_tool_called, branch_id, ToolCall.to_map(tool_call)})
-    end)
-
-    tool_names = Enum.map_join(tool_calls, ", ", &ToolCall.name/1)
-    on_event_fn.({:llm_status, branch_id, "Using #{tool_names}..."})
-
-    {tool_calls_to_execute, tool_results_for_limited_tools, new_tool_usage_counts} =
-      Enum.reduce(tool_calls, {[], [], tool_usage_counts}, fn tool_call,
-                                                              {exec_acc, limited_acc, counts_acc} ->
-        tool_name = ToolCall.name(tool_call)
-        tool_name_atom = String.to_atom(tool_name)
-        current_count = Map.get(counts_acc, tool_name_atom, 0)
-
-        if current_count < 10 do
-          {[tool_call | exec_acc], limited_acc,
-           Map.put(counts_acc, tool_name_atom, current_count + 1)}
-        else
-          tool_result =
-            Context.tool_result(tool_call.id, "Tool limit reached. Summarize with what you have")
-
-          {exec_acc, [tool_result | limited_acc], counts_acc}
-        end
-      end)
-
-    tool_calls_to_execute = Enum.reverse(tool_calls_to_execute)
-    tool_results_for_limited_tools = Enum.reverse(tool_results_for_limited_tools)
-
-    llm_context_after_tool_handling =
-      if Enum.empty?(tool_calls_to_execute) do
-        # If no tools are executed, just append the original tool calls to the context
-        Context.append(llm_context, Context.assistant("", tool_calls: tool_calls))
-      else
-        # Execute allowed tools and get updated context
-        llm_context_with_assistant_tool_calls =
-          Context.append(llm_context, Context.assistant("", tool_calls: tool_calls_to_execute))
-
-        ToolHandler.handle_tool_calls(
-          tool_calls_to_execute,
-          llm_context_with_assistant_tool_calls,
-          llm_tools,
-          chat_mod
-        )
-      end
-
-    updated_llm_context =
-      Enum.reduce(tool_results_for_limited_tools, llm_context_after_tool_handling, fn tr, acc ->
-        Context.append(acc, tr)
-      end)
-
-    %{
-      llm_call_params
-      | llm_context: updated_llm_context,
-        tool_usage_counts: new_tool_usage_counts
-    }
-  end
-
-  @spec process_stream(
-          ReqLLM.StreamResponse.t(),
-          any(),
-          (String.t() -> ReqLLM.Context.t()),
-          map(),
-          String.t()
-        ) :: boolean()
-  defp process_stream(
-         stream_response,
-         on_event_fn,
-         llm_context_builder,
-         tool_usage_counts,
-         branch_id
-       ) do
-    on_event_fn.({:update_tool_usage_counts, tool_usage_counts})
     start_time = :erlang.monotonic_time(:millisecond)
 
     sent_any_chunks =
       stream_response
       |> ReqLLM.StreamResponse.tokens()
       |> Enum.reduce_while(false, fn chunk, _acc ->
-        on_event_fn.({:llm_chunk, branch_id, chunk})
+        on_event.({:llm_chunk, branch_id, chunk})
         {:cont, true}
       end)
 
@@ -250,9 +130,97 @@ defmodule BranchedLLM.ChatOrchestrator do
     Logger.info("LLM stream complete metadata: #{inspect(metadata)}")
 
     if sent_any_chunks do
-      on_event_fn.({:llm_end, branch_id, llm_context_builder})
+      on_event.({:llm_end, branch_id, context_builder})
+      :ok
+    else
+      {:error, "The AI did not return a response. Please try again."}
     end
+  end
 
-    sent_any_chunks
+  @spec dispatch({:ok, ToolCallResult.t()}, llm_call_params()) :: :ok | {:error, String.t()}
+  defp dispatch(
+         {:ok, %ToolCallResult{tool_calls: tool_calls, context: context}},
+         llm_call_params
+       ) do
+    %{on_event: on_event, branch_id: branch_id} = llm_call_params
+
+    Enum.each(tool_calls, fn tool_call ->
+      on_event.({:llm_tool_called, branch_id, ToolCall.to_map(tool_call)})
+    end)
+
+    tool_names = Enum.map_join(tool_calls, ", ", &ToolCall.name/1)
+    on_event.({:llm_status, branch_id, "Using #{tool_names}..."})
+
+    updated_params = execute_tool_calls(tool_calls, %{llm_call_params | llm_context: context})
+    process_llm_request(%{updated_params | message: ""})
+  end
+
+  @spec dispatch({:ok, EmptyResult.t()}, llm_call_params()) :: {:error, String.t()}
+  defp dispatch({:ok, %EmptyResult{}}, _llm_call_params) do
+    {:error, "The AI did not return a response. Please try again."}
+  end
+
+  @spec dispatch({:error, term()}, llm_call_params()) :: {:error, String.t()}
+  defp dispatch({:error, reason}, _llm_call_params) do
+    {:error, "Error: #{inspect(reason)}"}
+  end
+
+  # Executes tool calls, partitioning them into those under the usage limit
+  # (to be executed) and those at the limit (to receive a fake "limit reached"
+  # result). Returns updated llm_call_params with the new context and counts.
+
+  @spec execute_tool_calls(list(ToolCall.t()), llm_call_params()) :: llm_call_params()
+  defp execute_tool_calls(
+         tool_calls,
+         %{
+           llm_context: llm_context,
+           llm_tools: llm_tools,
+           chat_mod: chat_mod,
+           tool_usage_counts: tool_usage_counts
+         } = llm_call_params
+       ) do
+    {to_execute, limited_results, new_counts} =
+      partition_tool_calls(tool_calls, tool_usage_counts)
+
+    llm_context_after_handling =
+      if Enum.empty?(to_execute) do
+        Context.append(llm_context, Context.assistant("", tool_calls: tool_calls))
+      else
+        llm_context_with_assistant =
+          Context.append(llm_context, Context.assistant("", tool_calls: to_execute))
+
+        ToolHandler.handle_tool_calls(to_execute, llm_context_with_assistant, llm_tools, chat_mod)
+      end
+
+    updated_context =
+      Enum.reduce(limited_results, llm_context_after_handling, fn tr, acc ->
+        Context.append(acc, tr)
+      end)
+
+    %{llm_call_params | llm_context: updated_context, tool_usage_counts: new_counts}
+  end
+
+  @spec partition_tool_calls(list(ToolCall.t()), map()) ::
+          {list(ToolCall.t()), list(Context.t()), map()}
+  defp partition_tool_calls(tool_calls, tool_usage_counts) do
+    Enum.reduce(tool_calls, {[], [], tool_usage_counts}, fn tool_call,
+                                                            {exec_acc, limited_acc, counts_acc} ->
+      tool_name = ToolCall.name(tool_call)
+      tool_name_atom = String.to_atom(tool_name)
+      current_count = Map.get(counts_acc, tool_name_atom, 0)
+
+      if current_count < 10 do
+        {[tool_call | exec_acc], limited_acc,
+         Map.put(counts_acc, tool_name_atom, current_count + 1)}
+      else
+        tool_result =
+          Context.tool_result(tool_call.id, "Tool limit reached. Summarize with what you have")
+
+        {exec_acc, [tool_result | limited_acc], counts_acc}
+      end
+    end)
+    |> then(fn {exec, limited, counts} ->
+      {Enum.reverse(exec), Enum.reverse(limited), counts}
+    end)
   end
 end
