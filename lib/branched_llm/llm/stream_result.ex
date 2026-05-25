@@ -1,6 +1,6 @@
 defmodule BranchedLLM.LLM.StreamResult do
   @moduledoc """
-  Tagged-union result types for `send_message_stream/3`.
+  Tagged-union result types for `send_message_stream/2`.
 
   Each variant clearly distinguishes the LLM's intent — content, tool call,
   empty, or error — eliminating the need for callers to inspect `tool_calls`
@@ -8,15 +8,15 @@ defmodule BranchedLLM.LLM.StreamResult do
 
   ## Variants
 
-    * `%ContentResult{}` — The LLM is streaming text content.
-    * `%ToolCallResult{}` — The LLM is invoking one or more tools.
-    * `%EmptyResult{}` — The LLM returned neither content nor tool calls.
-    * `%ErrorResult{}` — The LLM call failed.
+  * `%ContentResult{}` — The LLM is streaming text content.
+  * `%ToolCallResult{}` — The LLM is invoking one or more tools.
+  * `%EmptyResult{}` — The LLM returned neither content nor tool calls.
+  * `%ErrorResult{}` — The LLM call failed.
 
   ## Usage
 
-  The `ChatOrchestrator` pattern-matches on the struct type to decide how
-  to proceed, rather than checking whether a `tool_calls` list is empty:
+  The `ChatOrchestrator` pattern-matches on the struct type to decide how to
+  proceed, rather than checking whether a `tool_calls` list is empty:
 
       case result do
         %ContentResult{} -> process_stream(result.stream, ...)
@@ -32,31 +32,36 @@ defmodule BranchedLLM.LLM.StreamResult do
 
   defmodule ContentResult do
     @moduledoc """
-    The LLM is streaming text content. The `stream` field is a live
-    `StreamResponse` that can be iterated for token-by-token output.
+    The LLM is streaming text content.
+
+    The `stream` field is a live `StreamResponse` that can be iterated for
+    token-by-token output.
     """
 
-    defstruct [:stream, :context_builder]
+    defstruct [:stream]
 
     @type t :: %__MODULE__{
-            stream: StreamResponse.t(),
-            context_builder: (String.t() -> Context.t())
+            stream: StreamResponse.t()
           }
   end
 
   defmodule ToolCallResult do
     @moduledoc """
-    The LLM is invoking one or more tools. The `context` field carries
-    the `ReqLLM.Context` from the original stream response (needed to
-    append tool-call messages before the recursive LLM call).
+    The LLM is invoking one or more tools.
+
+    The `context` field carries the `ReqLLM.Context` from the original stream
+    response (needed to append tool-call messages before the recursive LLM call).
+
+    The `metadata_handle` field carries the `ReqLLM.StreamResponse.MetadataHandle`
+    pid from the stream, so token-usage metadata is not lost on tool-call turns.
     """
 
-    defstruct [:tool_calls, :context, :context_builder]
+    defstruct [:tool_calls, :context, :metadata_handle]
 
     @type t :: %__MODULE__{
             tool_calls: list(ToolCall.t()),
             context: Context.t(),
-            context_builder: (String.t() -> Context.t())
+            metadata_handle: pid() | nil
           }
   end
 
@@ -65,9 +70,9 @@ defmodule BranchedLLM.LLM.StreamResult do
     The LLM returned neither content nor tool calls (empty stream).
     """
 
-    defstruct [:context_builder]
+    defstruct []
 
-    @type t :: %__MODULE__{context_builder: (String.t() -> Context.t())}
+    @type t :: %__MODULE__{}
   end
 
   defmodule ErrorResult do
@@ -75,12 +80,10 @@ defmodule BranchedLLM.LLM.StreamResult do
     The LLM call failed. The `reason` field carries the error term.
     """
 
-    defstruct [:reason, :context_builder]
+    defstruct [:reason]
 
-    @type t :: %__MODULE__{reason: term(), context_builder: (String.t() -> Context.t()) | nil}
+    @type t :: %__MODULE__{reason: term()}
   end
-
-  @type context_builder :: (String.t() -> Context.t())
 
   @type t ::
           BranchedLLM.LLM.StreamResult.ContentResult.t()

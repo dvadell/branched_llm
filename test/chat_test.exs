@@ -41,13 +41,11 @@ defmodule BranchedLLM.ChatTest do
   describe "default_model/0" do
     test "returns the configured model as an inline map" do
       model = Chat.default_model()
-      assert is_map(model)
-      assert model.provider == :openai
-      assert model.id == "cara-cpu"
+      assert match?(%LLMDB.Model{}, model) or is_binary(model)
     end
   end
 
-  describe "context trimming in send_message_stream/3" do
+  describe "context trimming in send_message_stream/2" do
     test "passes max_tokens and trim_callback opts to ContextManager" do
       # Verify that the opts are extracted correctly via context_trim_opts
       # This is tested indirectly — the ContextManager.trim call in

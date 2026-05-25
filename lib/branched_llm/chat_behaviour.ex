@@ -26,12 +26,13 @@ defmodule BranchedLLM.ChatBehaviour do
 
   @callback new_context(String.t()) :: Context.t()
   @callback reset_context(Context.t()) :: Context.t()
-  @callback send_message_stream(String.t(), Context.t(), keyword()) ::
+  @callback send_message_stream(Context.t(), keyword()) ::
               {:ok, StreamResult.t()} | {:error, term()}
   @callback send_message(String.t(), Context.t(), keyword()) ::
               {:ok, String.t(), Context.t()} | {:error, term()}
   @callback execute_tool(Tool.t(), map()) :: {:ok, term()} | {:error, term()}
   @callback health_check() :: :ok | {:error, term()}
+  @callback default_model() :: ReqLLM.model_input()
 
   @doc """
   Calls the LLM provider to stream text for the given messages.
@@ -43,6 +44,6 @@ defmodule BranchedLLM.ChatBehaviour do
   `@callback` forces Dialyzer to trust the spec as the function contract
   rather than tracing into the implementation body.
   """
-  @callback stream_text(String.t(), Context.t(), keyword()) ::
+  @callback stream_text(ReqLLM.model_input(), Context.t(), keyword()) ::
               {:ok, StreamResponse.t()} | {:error, term()}
 end

@@ -100,7 +100,9 @@ config :branched_llm,
 Or pass per-call:
 
 ```elixir
-Chat.send_message_stream("Hello!", context,
+context_with_msg = ReqLLM.Context.append(context, ReqLLM.Context.user("Hello!"))
+
+Chat.send_message_stream(context_with_msg,
   max_tokens: 50_000,
   trim_callback: {BranchedLLM.ContextManager.Strategy.SlidingWindow, :trim, [keep: 10]}
 )
@@ -174,7 +176,8 @@ calculator_tool = ReqLLM.Tool.new!(
   end
 )
 
-{:ok, result} = Chat.send_message_stream("What is 123 * 456?", context, tools: [calculator_tool])
+context_with_msg = ReqLLM.Context.append(context, ReqLLM.Context.user("What is 123 * 456?"))
+{:ok, result} = Chat.send_message_stream(context_with_msg, tools: [calculator_tool])
 
 case result do
   %ContentResult{stream: stream} ->
@@ -234,13 +237,13 @@ branched_chat = BranchedChat.switch_branch(branched_chat, "main")
 
 ### Stream Result Types
 
-`Chat.send_message_stream/3` returns a tagged union that clearly distinguishes the LLM's intent:
+`Chat.send_message_stream/2` returns a tagged union that clearly distinguishes the LLM's intent:
 
 | Struct | Meaning | Key fields |
 |---|---|---|
-| `%ContentResult{}` | LLM is streaming text | `stream`, `context_builder` |
-| `%ToolCallResult{}` | LLM is invoking tools | `tool_calls`, `context`, `context_builder` |
-| `%EmptyResult{}` | LLM returned nothing | `context_builder` |
+| `%ContentResult{}` | LLM is streaming text | `stream` |
+| `%ToolCallResult{}` | LLM is invoking tools | `tool_calls`, `context` |
+| `%EmptyResult{}` | LLM returned nothing | |
 
 This eliminates the need for callers to inspect `tool_calls` lists or handle dummy streams — the intent is explicit in the type.
 
@@ -249,11 +252,11 @@ This eliminates the need for callers to inspect `tool_calls` lists or handle dum
 The `ContextManager` prevents context overflow by:
 
 1. **Estimating tokens** from message content (~4 characters per token by default)
-2. **Trimming before LLM calls** in `Chat.send_message_stream/3` and `BranchedChat.rebuild_context_from_messages/2`
+2. **Trimming before LLM calls** in `Chat.send_message_stream/2` and `BranchedChat.rebuild_context_from_messages/2`
 3. **Preserving system messages** while removing the oldest conversation messages
 4. **Supporting pluggable strategies** via the `Strategy` behaviour — four built-in strategies are provided
 
-When trimming occurs, only the context sent to the LLM is trimmed. The full message history in `BranchedChat` is preserved — the `context_builder` closure captures the untrimmed context so that `finish_ai_response` stores the complete conversation.
+When trimming occurs, only the context sent to the LLM is trimmed. The full message history in `BranchedChat` is preserved. Once the LLM response is complete, the application calls `BranchedChat.finish_ai_response/3` with the accumulated full text, appending the complete assistant response back to the untrimmed context of the branch.
 
 Trimming only runs when the estimated token count **exceeds** `max_tokens`. By default, `max_tokens` is `:infinity` — no trimming occurs unless you configure it.
 
@@ -263,7 +266,7 @@ The `ChatOrchestrator` communicates with the caller via a callback function (`on
 
 ```elixir
 {:llm_chunk, branch_id, chunk}              # Streaming text chunk
-{:llm_end, branch_id, context_builder}      # Stream complete
+{:llm_end, branch_id, full_text}            # Stream complete, returning full assistant text
 {:llm_status, branch_id, status}            # Status update ("Thinking...", "Using calculator...")
 {:llm_error, branch_id, error_message}      # Error occurred
 {:llm_tool_called, branch_id, tool_call} # LLM requested a tool call

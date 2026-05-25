@@ -21,6 +21,7 @@ defmodule BranchedLLM.Chat do
   alias BranchedLLM.ContextManager
   alias BranchedLLM.LLM.StreamResult
   alias BranchedLLM.LLM.StreamResult.{ContentResult, EmptyResult, ErrorResult, ToolCallResult}
+  alias BranchedLLM.StructuredOutput.Enforcer
   alias ReqLLM.Context
   alias ReqLLM.StreamChunk
   alias ReqLLM.StreamResponse
@@ -57,14 +58,15 @@ defmodule BranchedLLM.Chat do
 
     on_event = fn
       {:llm_chunk, _id, chunk} -> send(parent, {ref, :chunk, chunk})
-      {:llm_end, _id, builder} -> send(parent, {ref, :end, builder})
+      {:llm_end, _id, full_text} -> send(parent, {ref, :end, full_text})
       {:llm_error, _id, err} -> send(parent, {ref, :error, err})
       _ -> :ok
     end
 
+    updated_context = add_user_message(context, message)
+
     params = %{
-      message: message,
-      llm_context: context,
+      llm_context: updated_context,
       on_event: on_event,
       llm_tools: config.tools,
       chat_mod: __MODULE__,
@@ -73,13 +75,13 @@ defmodule BranchedLLM.Chat do
     }
 
     {:ok, _pid} = BranchedLLM.ChatOrchestrator.run(params)
-    wait_for_sync_result(ref, "")
+    wait_for_sync_result(ref, "", updated_context)
   end
 
-  defp wait_for_sync_result(ref, acc) do
+  defp wait_for_sync_result(ref, acc, context) do
     receive do
-      {^ref, :chunk, chunk} -> wait_for_sync_result(ref, acc <> chunk)
-      {^ref, :end, builder} -> {:ok, acc, builder.(acc)}
+      {^ref, :chunk, chunk} -> wait_for_sync_result(ref, acc <> chunk, context)
+      {^ref, :end, full_text} -> {:ok, full_text, add_assistant_message(context, full_text)}
       {^ref, :error, err} -> {:error, err}
     after
       60_000 -> {:error, "Timed out waiting for LLM response"}
@@ -87,7 +89,7 @@ defmodule BranchedLLM.Chat do
   end
 
   @doc """
-  Sends a message and returns a `BranchedLLM.LLM.StreamResult` tagged union.
+  Sends a message stream and returns a `BranchedLLM.LLM.StreamResult` tagged union.
 
   The result is one of three structs that clearly distinguishes the LLM's intent:
 
@@ -98,7 +100,8 @@ defmodule BranchedLLM.Chat do
   ## Examples
 
       iex> context = BranchedLLM.Chat.new_context("You are a helpful assistant")
-      iex> {:ok, %ContentResult{} = result} = BranchedLLM.Chat.send_message_stream("Hello!", context)
+      iex> context_with_msg = ReqLLM.Context.append(context, ReqLLM.Context.user("Hello!"))
+      iex> %ContentResult{} = result} = BranchedLLM.Chat.send_message_stream(context_with_msg)
       iex> Enum.each(result.stream, fn chunk -> IO.write(chunk) end)
 
   ## Options
@@ -109,35 +112,28 @@ defmodule BranchedLLM.Chat do
   * `:trim_callback` - Custom context trimming callback (overrides app config). See `BranchedLLM.ContextManager`.
   """
   @impl true
-  @spec send_message_stream(String.t(), Context.t(), keyword()) ::
+  @spec send_message_stream(Context.t(), keyword()) ::
           {:ok, StreamResult.t()} | {:error, term()}
-  def send_message_stream(message, context, opts \\ []) do
+  def send_message_stream(context, opts \\ []) do
     config = build_config(opts)
+    schema = Keyword.get(opts, :schema)
+    provider_options = Keyword.get(opts, :provider_options)
 
-    updated_context =
-      if message != "" do
-        add_user_message(context, message)
-      else
-        context
-      end
+    call_opts =
+      []
+      |> maybe_put_schema(schema)
+      |> maybe_put_provider_options_from_opts(provider_options)
 
     {trimmed_context, was_trimmed} =
-      ContextManager.trim(updated_context, context_trim_opts(opts))
+      ContextManager.trim(context, context_trim_opts(opts))
 
     if was_trimmed do
       Logger.info(
-        "Context trimmed from #{length(updated_context.messages)} to #{length(trimmed_context.messages)} messages"
+        "Context trimmed from #{length(context.messages)} to #{length(trimmed_context.messages)} messages"
       )
     end
 
-    # The context_builder captures the *untrimmed* context so that
-    # finish_ai_response still stores the full conversation history.
-    context_builder = fn final_text ->
-      add_assistant_message(updated_context, final_text)
-    end
-
-    call_llm(config.model, trimmed_context, config.tools)
-    |> unwrap_call_llm_result(context_builder)
+    call_llm(config.model, trimmed_context, config.tools, call_opts)
   end
 
   @doc """
@@ -184,21 +180,46 @@ defmodule BranchedLLM.Chat do
   end
 
   @doc """
-  Returns the default model spec as an inline map, bypassing LLMDB catalog lookup.
-  Accepts either `"provider:model"` strings or `%{provider: atom, id: string}` maps.
+  Returns the default model, resolved to a `%LLMDB.Model{}` struct.
+
+  Reads from :branched_llm config, then falls back to a default.
+  Resolving the model string through `ReqLLM.model/1` once avoids repeated
+  "unverified model" warnings on every LLM call.
   """
-  @spec default_model() :: map() | String.t()
+  @spec default_model() :: ReqLLM.model_input()
+  @impl true
   def default_model do
-    case Application.get_env(:branched_llm, :ai_model, "openai:cara-cpu") do
-      model when is_binary(model) -> parse_model_string(model)
-      model when is_map(model) -> model
+    model_string =
+      Application.get_env(:branched_llm, :ai_model, "openai:cara-cpu")
+
+    Application.get_env(:branched_llm, :ai_model, "openai:cara-cpu")
+
+    case resolve_model(model_string) do
+      {:ok, model} -> model
+      {:error, _} -> model_string
     end
   end
 
-  defp parse_model_string(model_string) do
+  # Resolves a "provider:model_id" string into a %LLMDB.Model{} without
+  # triggering the "unverified model" warning from ReqLLM.model/1.
+  # Falls back to ReqLLM.model/1 for known-catalog models.
+  @spec resolve_model(String.t()) :: {:ok, LLMDB.Model.t()} | {:error, term()}
+  defp resolve_model(model_string) do
     case String.split(model_string, ":", parts: 2) do
-      [provider, id] -> %{provider: String.to_atom(provider), id: id}
-      [id] -> %{id: id}
+      [provider_str, model_id] ->
+        try do
+          provider = String.to_existing_atom(provider_str)
+
+          # Use inline model spec to bypass LLMDB catalog lookup and
+          # avoid the "unverified model" warning for custom/local models.
+          ReqLLM.model(%{provider: provider, id: model_id})
+        rescue
+          ArgumentError ->
+            ReqLLM.model(model_string)
+        end
+
+      _ ->
+        ReqLLM.model(model_string)
     end
   end
 
@@ -226,16 +247,35 @@ defmodule BranchedLLM.Chat do
     Context.append(context, assistant(message, opts))
   end
 
-  @spec call_llm(String.t() | map() | map(), Context.t(), list()) :: StreamResult.t()
-  defp call_llm(model, context, tools) do
+  @spec call_llm(ReqLLM.model_input(), Context.t(), list(), keyword()) ::
+          {:ok, StreamResult.t()} | {:error, term()}
+  defp call_llm(model, context, tools, opts) do
     Logger.info("LLM call_llm starting with context: #{inspect(context)}")
 
     start_time = :erlang.monotonic_time(:millisecond)
 
+    stream_opts =
+      [tools: tools]
+      |> maybe_put_provider_options(opts)
+
     result =
-      case __MODULE__.stream_text(model, context, tools: tools) do
-        {:ok, stream_response} -> stream_result(stream_response, tools)
-        {:error, reason} -> %ErrorResult{reason: reason}
+      case __MODULE__.stream_text(model, context, stream_opts) do
+        {:ok, stream_response} ->
+          schema = Keyword.get(opts, :schema)
+
+          effective_tools =
+            if schema &&
+                 Enforcer.resolve_provider(model) == :anthropic do
+              synthetic_tool = Enforcer.build_synthetic_tool(schema)
+              tools ++ [synthetic_tool]
+            else
+              tools
+            end
+
+          {:ok, stream_result(stream_response, effective_tools)}
+
+        {:error, reason} ->
+          {:error, reason}
       end
 
     end_time = :erlang.monotonic_time(:millisecond)
@@ -247,48 +287,48 @@ defmodule BranchedLLM.Chat do
     result
   end
 
+  defp maybe_put_provider_options(stream_opts, opts) do
+    case Keyword.get(opts, :provider_options) do
+      nil -> stream_opts
+      po -> Keyword.put(stream_opts, :provider_options, po)
+    end
+  end
+
+  defp maybe_put_schema(opts, nil), do: opts
+  defp maybe_put_schema(opts, schema), do: Keyword.put(opts, :schema, schema)
+
+  defp maybe_put_provider_options_from_opts(opts, nil), do: opts
+
+  defp maybe_put_provider_options_from_opts(opts, po),
+    do: Keyword.put(opts, :provider_options, po)
+
   @doc false
   @impl true
-  @spec stream_text(String.t() | map(), Context.t(), keyword()) ::
+  @spec stream_text(ReqLLM.model_input(), Context.t(), keyword()) ::
           {:ok, StreamResponse.t()} | {:error, term()}
   def stream_text(model, context, opts) do
     %{model_endpoint: model_endpoint, api_key: api_key} = endpoints()
     model_endpoint = Keyword.get(opts, :base_url, model_endpoint)
     tools = Keyword.get(opts, :tools, [])
-    llm_opts = [tools: tools, base_url: model_endpoint]
-    llm_opts = if api_key, do: Keyword.put(llm_opts, :api_key, api_key), else: llm_opts
+    provider_options = Keyword.get(opts, :provider_options, [])
 
-    ReqLLM.stream_text(model, context.messages, llm_opts)
-  end
+    base_opts = [tools: tools, base_url: model_endpoint]
+    base_opts = if api_key, do: Keyword.put(base_opts, :api_key, api_key), else: base_opts
 
-  @spec unwrap_call_llm_result(StreamResult.t(), (String.t() -> Context.t())) ::
-          {:ok, StreamResult.t()} | {:error, term()}
-  defp unwrap_call_llm_result(%ErrorResult{reason: reason}, _context_builder) do
-    {:error, reason}
-  end
+    stream_opts =
+      if provider_options != [] do
+        Keyword.put(base_opts, :provider_options, provider_options)
+      else
+        base_opts
+      end
 
-  defp unwrap_call_llm_result(result, context_builder) do
-    {:ok, inject_context_builder(result, context_builder)}
-  end
-
-  @spec inject_context_builder(StreamResult.t(), (String.t() -> Context.t())) ::
-          StreamResult.t()
-  defp inject_context_builder(%ContentResult{} = result, context_builder) do
-    %{result | context_builder: context_builder}
-  end
-
-  defp inject_context_builder(%ToolCallResult{} = result, context_builder) do
-    %{result | context_builder: context_builder}
-  end
-
-  defp inject_context_builder(%EmptyResult{} = result, context_builder) do
-    %{result | context_builder: context_builder}
+    ReqLLM.stream_text(model, context.messages, stream_opts)
   end
 
   # When no tools are provided, the stream is always content — no intent detection needed.
   @spec stream_result(StreamResponse.t(), list()) :: StreamResult.t()
   defp stream_result(stream_response, []),
-    do: %ContentResult{stream: stream_response, context_builder: nil}
+    do: %ContentResult{stream: stream_response}
 
   # When tools are provided, classify the stream to determine intent.
   defp stream_result(stream_response, _tools),
@@ -305,7 +345,7 @@ defmodule BranchedLLM.Chat do
         %ToolCallResult{
           tool_calls: tool_calls,
           context: stream_response.context,
-          context_builder: nil
+          metadata_handle: stream_response.metadata_handle
         }
 
       %{type: :final_answer, text: text} when is_binary(text) and text != "" ->
@@ -314,10 +354,12 @@ defmodule BranchedLLM.Chat do
         chunk = StreamChunk.text(text)
         new_stream = [chunk]
 
-        %ContentResult{stream: %{stream_response | stream: new_stream}, context_builder: nil}
+        %ContentResult{stream: %{stream_response | stream: new_stream}}
 
+      # Unexpected stream classification - treat as empty result.
+      # Empty stream — explicit empty result, no dummy stream.
       _ ->
-        %EmptyResult{context_builder: nil}
+        %EmptyResult{}
     end
   rescue
     e in Jason.EncodeError -> %ErrorResult{reason: e}

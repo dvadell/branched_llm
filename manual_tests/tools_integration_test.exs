@@ -34,14 +34,15 @@ defmodule BranchedLLM.Integration.ToolsTest do
       end
     )
 
-    context = BranchedLLM.Chat.new_context("You are a helpful assistant.")
+  context =
+    BranchedLLM.Chat.new_context("You are a helpful assistant.")
+    |> ReqLLM.Context.append(ReqLLM.Context.user("What is 12313 * 4569838?"))
 
     # Capture the *test process* PID so the callback can send events here
     # even though it runs inside a Task (where self() would be the Task PID).
     test_pid = self()
 
     params = %{
-      message: "What is 12313 * 4569838?",
       llm_context: context,
       on_event: fn event -> send(test_pid, {:event, event}) end,
       llm_tools: [calculator],

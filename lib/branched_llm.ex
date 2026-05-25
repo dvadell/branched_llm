@@ -25,6 +25,7 @@ defmodule BranchedLLM do
   """
 
   alias BranchedLLM.{BranchedChat, ChatOrchestrator, Message}
+  alias ReqLLM.Context
 
   @doc """
   Creates a new `BranchedChat` with the given chat module, initial messages, and context.
@@ -51,9 +52,13 @@ defmodule BranchedLLM do
         llm_tools,
         tool_usage_counts
       ) do
+    llm_context =
+      branched_chat
+      |> BranchedChat.get_current_context()
+      |> Context.append(Context.user(message))
+
     params = %{
-      message: message,
-      llm_context: BranchedChat.get_current_context(branched_chat),
+      llm_context: llm_context,
       on_event: on_event,
       llm_tools: llm_tools,
       chat_mod: branched_chat.chat_module,

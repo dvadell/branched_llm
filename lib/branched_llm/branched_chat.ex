@@ -143,12 +143,11 @@ defmodule BranchedLLM.BranchedChat do
   end
 
   @doc """
-  Finalizes an AI response with the new context.
+  Finalizes an AI response with the full text of the assistant's reply.
   """
-  def finish_ai_response(%__MODULE__{} = t, branch_id, llm_context_builder) do
+  def finish_ai_response(%__MODULE__{} = t, branch_id, full_text) do
     branch = t.branches[branch_id]
-    final_content = get_last_assistant_message_content(branch.messages)
-    updated_llm_context = llm_context_builder.(final_content)
+    updated_llm_context = Context.append(branch.context, Context.assistant(full_text))
 
     updated_branch = %{
       branch
@@ -160,13 +159,6 @@ defmodule BranchedLLM.BranchedChat do
 
     branches = Map.put(t.branches, branch_id, updated_branch)
     %{t | branches: branches}
-  end
-
-  defp get_last_assistant_message_content(messages) do
-    case List.last(messages) do
-      %Message{role: :assistant, content: content} -> content
-      _ -> ""
-    end
   end
 
   @doc """

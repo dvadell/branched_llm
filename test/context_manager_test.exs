@@ -1,6 +1,8 @@
 defmodule BranchedLLM.ContextManagerTest do
   use ExUnit.Case, async: true
 
+  import ExUnit.CaptureLog
+
   alias BranchedLLM.ContextManager
   alias ReqLLM.Context
   alias ReqLLM.Message
@@ -249,13 +251,20 @@ defmodule BranchedLLM.ContextManagerTest do
 
       bad_callback = fn _ctx -> raise "oops" end
 
-      {result, was_trimmed} =
-        ContextManager.trim(context, max_tokens: 1, trim_callback: bad_callback)
+      log =
+        capture_log(fn ->
+          {result, was_trimmed} =
+            ContextManager.trim(context, max_tokens: 1, trim_callback: bad_callback)
 
-      assert was_trimmed
+          assert was_trimmed
 
-      system_msgs = Enum.filter(result.messages, fn msg -> msg.role == :system end)
-      assert length(system_msgs) == 1
+          system_msgs = Enum.filter(result.messages, fn msg -> msg.role == :system end)
+          assert length(system_msgs) == 1
+        end)
+
+      assert log =~ "ContextManager trim_callback failed"
+      assert log =~ "oops"
+      assert log =~ "Falling back to pruning"
     end
 
     test "rescues from failing {module, function} callback" do
@@ -265,16 +274,25 @@ defmodule BranchedLLM.ContextManagerTest do
           Context.user("Hello")
         ])
 
-      {result, was_trimmed} =
-        ContextManager.trim(context,
-          max_tokens: 1,
-          trim_callback: {__MODULE__, :failing_trim}
-        )
+      log =
+        capture_log(fn ->
+          {result, was_trimmed} =
+            ContextManager.trim(context,
+              max_tokens: 1,
+              trim_callback: {__MODULE__, :failing_trim}
+            )
 
-      assert was_trimmed
+          assert was_trimmed
 
-      system_msgs = Enum.filter(result.messages, fn msg -> msg.role == :system end)
-      assert length(system_msgs) == 1
+          system_msgs = Enum.filter(result.messages, fn msg -> msg.role == :system end)
+          assert length(system_msgs) == 1
+        end)
+
+      assert log =~
+               "ContextManager trim_callback {Elixir.BranchedLLM.ContextManagerTest, failing_trim} failed"
+
+      assert log =~ "2-tuple failure"
+      assert log =~ "Falling back to pruning"
     end
 
     test "rescues from failing {module, function, opts} callback" do
@@ -284,16 +302,25 @@ defmodule BranchedLLM.ContextManagerTest do
           Context.user("Hello")
         ])
 
-      {result, was_trimmed} =
-        ContextManager.trim(context,
-          max_tokens: 1,
-          trim_callback: {__MODULE__, :failing_trim_with_opts, [boom: true]}
-        )
+      log =
+        capture_log(fn ->
+          {result, was_trimmed} =
+            ContextManager.trim(context,
+              max_tokens: 1,
+              trim_callback: {__MODULE__, :failing_trim_with_opts, [boom: true]}
+            )
 
-      assert was_trimmed
+          assert was_trimmed
 
-      system_msgs = Enum.filter(result.messages, fn msg -> msg.role == :system end)
-      assert length(system_msgs) == 1
+          system_msgs = Enum.filter(result.messages, fn msg -> msg.role == :system end)
+          assert length(system_msgs) == 1
+        end)
+
+      assert log =~
+               "ContextManager trim_callback {Elixir.BranchedLLM.ContextManagerTest, failing_trim_with_opts} failed"
+
+      assert log =~ "3-tuple failure"
+      assert log =~ "Falling back to pruning"
     end
 
     test "trims context with binary content messages" do
