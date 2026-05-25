@@ -3,6 +3,8 @@ defmodule BranchedLLMTest do
   import Mox
 
   alias BranchedLLM.BranchedChat
+  alias BranchedLLM.LLM.StreamResult.ContentResult
+
   alias ReqLLM.Context
   alias ReqLLM.StreamResponse.MetadataHandle
 
@@ -12,7 +14,6 @@ defmodule BranchedLLMTest do
     test "creates a BranchedChat using the convenience function" do
       ctx = Context.new([Context.system("test")])
       chat = BranchedLLM.new_chat(BranchedLLM.ChatMock, [], ctx)
-
       assert %BranchedChat{} = chat
       assert chat.current_branch_id == "main"
     end
@@ -28,13 +29,16 @@ defmodule BranchedLLMTest do
         {:ok, metadata_handle} = MetadataHandle.start_link(fn -> %{} end)
 
         {:ok,
-         %ReqLLM.StreamResponse{
-           stream: stream,
-           context: ctx,
-           model: "mock",
-           cancel: fn -> :ok end,
-           metadata_handle: metadata_handle
-         }, fn t -> Context.new([Context.assistant(t)]) end, [], nil}
+         %ContentResult{
+           stream: %ReqLLM.StreamResponse{
+             stream: stream,
+             context: ctx,
+             model: "mock",
+             cancel: fn -> :ok end,
+             metadata_handle: metadata_handle
+           },
+           context_builder: fn t -> Context.new([Context.assistant(t)]) end
+         }}
       end)
 
       test_pid = self()

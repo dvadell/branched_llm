@@ -184,10 +184,8 @@ defmodule BranchedLLM.LLM.StreamParserTest do
     end
 
     test "extracts arguments from meta fragment when index matches" do
-      # Tool call chunk with index in metadata
       tool_chunk = ReqLLM.StreamChunk.tool_call("calc", %{}, %{index: 0})
 
-      # Meta chunk with matching index and fragment
       meta_chunk =
         ReqLLM.StreamChunk.meta(%{
           tool_call_args: %{
@@ -201,9 +199,53 @@ defmodule BranchedLLM.LLM.StreamParserTest do
       tool_call_result = List.first(result)
       assert ReqLLM.ToolCall.name(tool_call_result) == "calc"
 
-      # The arguments should come from the meta fragment, not the tool_call chunk
       args = ReqLLM.ToolCall.args_map(tool_call_result)
       assert args["expression"] == "1+1"
+    end
+
+    test "extract_arguments_from_call falls back to {} when arguments are nil" do
+      chunk = %ReqLLM.StreamChunk{
+        type: :tool_call,
+        name: "test",
+        arguments: nil,
+        metadata: %{}
+      }
+
+      result = StreamParser.extract_tool_calls([chunk])
+      assert length(result) == 1
+      tool_call = List.first(result)
+      args = ReqLLM.ToolCall.args_map(tool_call)
+      assert args == %{}
+    end
+
+    test "extract_arguments_from_call with nil arguments falls back to map metadata arguments" do
+      chunk = %ReqLLM.StreamChunk{
+        type: :tool_call,
+        name: "test",
+        arguments: nil,
+        metadata: %{arguments: %{"meta_key" => "meta_val"}}
+      }
+
+      result = StreamParser.extract_tool_calls([chunk])
+      assert length(result) == 1
+      tool_call = List.first(result)
+      args = ReqLLM.ToolCall.args_map(tool_call)
+      assert args["meta_key"] == "meta_val"
+    end
+
+    test "extract_arguments_from_call with binary arguments from metadata" do
+      chunk = %ReqLLM.StreamChunk{
+        type: :tool_call,
+        name: "test",
+        arguments: nil,
+        metadata: %{arguments: "{\"from_meta\": true}"}
+      }
+
+      result = StreamParser.extract_tool_calls([chunk])
+      assert length(result) == 1
+      tool_call = List.first(result)
+      args = ReqLLM.ToolCall.args_map(tool_call)
+      assert args["from_meta"] == true
     end
   end
 end

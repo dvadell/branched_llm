@@ -67,16 +67,12 @@ restored = Message.from_map(map)
 ```elixir
 alias BranchedLLM.{BranchedChat, Message, Chat}
 
-# Create initial messages
-messages = [
-  Message.new(:system, "You are a helpful assistant.")
-]
-
-# Create a context
+# The system prompt lives in the ReqLLM.Context — no need to duplicate
+# it in the messages list (system-role messages are skipped during context rebuild).
 context = Chat.new_context("You are a helpful assistant.")
 
-# Create the branched chat
-chat = BranchedChat.new(Chat, messages, context)
+# Create the branched chat with an empty message list
+chat = BranchedChat.new(Chat, [], context)
 
 # Add a user message to the current branch
 chat = BranchedChat.add_user_message(chat, "What is 2 + 2?")
@@ -159,10 +155,10 @@ chat = BranchedChat.clear_active_task(chat, "main")
 Tools allow the LLM to call your code. Let's create a calculator tool.
 
 ```elixir
-calculator = ReqLLM.Tool.new(
+calculator = ReqLLM.Tool.new!(
   name: "calculator",
   description: "Evaluates a mathematical expression",
-  parameters: %{
+  parameter_schema: %{
     type: "object",
     properties: %{
       expression: %{
@@ -172,7 +168,7 @@ calculator = ReqLLM.Tool.new(
     },
     required: ["expression"]
   },
-  execute: fn %{"expression" => expr} ->
+  callback: fn %{"expression" => expr} ->
     # SECURITY WARNING: Using Code.eval_string on LLM output is dangerous.
     # In a production app, use a safe math library or a restricted parser.
     try do
@@ -198,14 +194,18 @@ The `on_event` function can be used to handle streaming updates directly. In thi
 ```elixir
 alias BranchedLLM.{Chat, ChatOrchestrator}
 
+# llm_context holds the conversation history (system prompt + past messages).
+# message is the new user input — it gets appended to the context before calling the LLM.
+# They're separate so you can reuse the same context across multiple requests.
 context = Chat.new_context("You are a helpful assistant.")
 
 params = %{
   message: "What is 123 * 456?",
   llm_context: context,
   on_event: fn
-    {:llm_chunk, _id, chunk} -> IO.write(if is_map(chunk), do: chunk.text, else: chunk)
-    {:llm_tool_called, _id, %{name: name, arguments: args}} -> IO.puts("\n[Tool called: #{name}(#{inspect(args)})]")
+      {:llm_chunk, _id, chunk} -> IO.write(if is_map(chunk), do: chunk.text, else: chunk)
+      {:llm_tool_called, _id, %{name: name, arguments: args}} -> IO.puts("
+[Tool called: #{name}(#{inspect(args)})]")
     {:llm_status, _id, status} -> IO.puts("\n[Status: #{status}]")
     {:llm_end, _id, _builder} -> IO.puts("\n[Stream Complete]")
     {:llm_error, _id, err} -> IO.puts("\n[Error: #{err}]")
@@ -246,7 +246,132 @@ LLMErrorFormatter.format(rate_error)
 
 ---
 
-## Part 8: Putting It All Together — A Mini-App
+## Part 8: Context Window Management
+
+Long conversations can exceed the LLM's token limit (e.g., 128k for GPT-4), causing API errors. `ContextManager` prevents this by automatically trimming the context.
+
+### Estimating Token Count
+
+```elixir
+alias BranchedLLM.ContextManager
+
+context = Chat.new_context("You are a helpful assistant.")
+
+# Estimate how many tokens the context currently uses
+ContextManager.estimate_tokens(context)
+#=> 7
+
+# Adjust the heuristic for CJK text (~1.5-2 chars/token)
+ContextManager.estimate_tokens(context, chars_per_token: 2)
+#=> 14
+```
+
+### Automatic Trimming
+
+Configure a max token limit and trimming happens automatically before LLM calls:
+
+```elixir
+# In config/config.exs
+config :branched_llm, max_tokens: 128_000
+
+# Or per-call:
+Chat.send_message_stream("Hello!", context, max_tokens: 50_000)
+```
+
+### Manual Trimming
+
+You can also call `trim/2` directly to inspect or control trimming:
+
+```elixir
+# Build a large context
+context = Chat.new_context("You are a helpful assistant.")
+context = ReqLLM.Context.append(context, ReqLLM.Context.user("First question"))
+context = ReqLLM.Context.append(context, ReqLLM.Context.assistant("First answer"))
+context = ReqLLM.Context.append(context, ReqLLM.Context.user("Second question"))
+
+# Trim to fit within a small limit
+{trimmed, was_trimmed} = ContextManager.trim(context, max_tokens: 5)
+was_trimmed
+#=> true
+
+# System messages are always preserved
+Enum.filter(trimmed.messages, fn msg -> msg.role == :system end)
+#=> [%ReqLLM.Message{role: :system, ...}]
+
+# The most recent messages are kept
+List.last(trimmed.messages).role
+#=> :user
+```
+
+### Built-in Strategies
+
+BranchedLLM ships four strategies under `BranchedLLM.ContextManager.Strategy.*`:
+
+```elixir
+alias BranchedLLM.ContextManager.Strategy
+
+# Prune: drop oldest messages until context fits (default fallback)
+trimmed = Strategy.Prune.trim(context, max_tokens: 5)
+
+# SlidingWindow: keep only the last N conversation messages
+trimmed = Strategy.SlidingWindow.trim(context, keep: 4)
+
+# Percentage: keep the last 70% of conversation tokens
+trimmed = Strategy.Percentage.trim(context, retain: 0.7)
+
+# Summarize: condense older messages into a single summary
+trimmed = Strategy.Summarize.trim(context, recent_count: 4)
+```
+
+Configure a strategy globally:
+
+```elixir
+# In config/config.exs
+config :branched_llm,
+  max_tokens: 128_000,
+  trim_callback: {BranchedLLM.ContextManager.Strategy.SlidingWindow, :trim, [keep: 20]}
+```
+
+Or per-call:
+
+```elixir
+ContextManager.trim(context,
+  max_tokens: 128_000,
+  trim_callback: {Strategy.SlidingWindow, :trim, [keep: 10]}
+)
+```
+
+### Custom Strategy
+
+Implement the `Strategy` behaviour for your own trimming logic:
+
+```elixir
+defmodule MyApp.Strategy.KeepRecent do
+  @behaviour BranchedLLM.ContextManager.Strategy
+
+  @impl true
+  def trim(context, opts) do
+    keep = Keyword.get(opts, :keep, 10)
+    system = Enum.filter(context.messages, fn msg -> msg.role == :system end)
+    conversation = Enum.reject(context.messages, fn msg -> msg.role == :system end)
+    recent = Enum.take(conversation, -keep)
+    %{context | messages: system ++ recent}
+  end
+end
+```
+
+Then use it:
+
+```elixir
+ContextManager.trim(context,
+  max_tokens: 128_000,
+  trim_callback: {MyApp.Strategy.KeepRecent, :trim, [keep: 20]}
+)
+```
+
+---
+
+## Part 9: Putting It All Together — A Mini-App
 
 You can run the built-in sample chat directly to see everything in action:
 
@@ -264,7 +389,7 @@ defmodule IExChat do
 
   def start do
     context = Chat.new_context("You are a concise assistant.")
-    chat = BranchedChat.new(Chat, [Message.new(:system, "You are a concise assistant.")], context)
+    chat = BranchedChat.new(Chat, [], context)
     loop(chat)
   end
 
@@ -298,6 +423,7 @@ end
 | Branching | `BranchedLLM.BranchedChat` | `branch_off/2`, `switch_branch/2` |
 | Chat | `BranchedLLM.Chat` | `send_message/3`, `send_message_stream/3` |
 | Orchestration | `BranchedLLM.ChatOrchestrator` | `run/1` |
+| Context Window | `BranchedLLM.ContextManager` | `trim/2`, `estimate_tokens/2` |
 | Errors | `BranchedLLM.LLMErrorFormatter` | `format/1` |
 | Caching | `BranchedLLM.ToolCache` | `get_result/2`, `save_result/3` |
 

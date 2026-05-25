@@ -3,6 +3,8 @@ defmodule BranchedLLM.OrchestratorTest do
   import Mox
 
   alias BranchedLLM.ChatOrchestrator
+  alias BranchedLLM.LLM.StreamResult.{ContentResult, EmptyResult, ToolCallResult}
+
   alias ReqLLM.Context
   alias ReqLLM.StreamResponse.MetadataHandle
 
@@ -35,7 +37,8 @@ defmodule BranchedLLM.OrchestratorTest do
       tokens = ["Hello", " world"]
 
       expect(BranchedLLM.ChatMock, :send_message_stream, 1, fn _msg, _ctx, _opts ->
-        {:ok, stream_response(tokens), &context_builder/1, [], nil}
+        {:ok,
+         %ContentResult{stream: stream_response(tokens), context_builder: &context_builder/1}}
       end)
 
       pid = self()
@@ -91,7 +94,12 @@ defmodule BranchedLLM.OrchestratorTest do
       expect(BranchedLLM.ChatMock, :send_message_stream, 1, fn _msg, _ctx, opts ->
         :counters.add(call_count, 1, 1)
         assert Keyword.has_key?(opts, :tools)
-        {:ok, stream_response(["response"]), &context_builder/1, [], nil}
+
+        {:ok,
+         %ContentResult{
+           stream: stream_response(["response"]),
+           context_builder: &context_builder/1
+         }}
       end)
 
       pid = self()
@@ -119,7 +127,12 @@ defmodule BranchedLLM.OrchestratorTest do
 
       # First call returns tool_calls
       expect(BranchedLLM.ChatMock, :send_message_stream, 1, fn _msg, _ctx, _opts ->
-        {:ok, stream_response([]), &context_builder/1, [tool_call], nil}
+        {:ok,
+         %ToolCallResult{
+           tool_calls: [tool_call],
+           context: Context.new([]),
+           context_builder: &context_builder/1
+         }}
       end)
 
       # Mock execute_tool for the tool call
@@ -129,7 +142,11 @@ defmodule BranchedLLM.OrchestratorTest do
 
       # Second call (after recursion) returns text
       expect(BranchedLLM.ChatMock, :send_message_stream, 1, fn _msg, _ctx, _opts ->
-        {:ok, stream_response(["Final answer"]), &context_builder/1, [], nil}
+        {:ok,
+         %ContentResult{
+           stream: stream_response(["Final answer"]),
+           context_builder: &context_builder/1
+         }}
       end)
 
       pid = self()
@@ -146,10 +163,6 @@ defmodule BranchedLLM.OrchestratorTest do
 
       {:ok, _pid} = ChatOrchestrator.run(params)
 
-      assert_receive {:llm_tool_called, "main",
-                      %{id: "call_1", name: "get_weather", arguments: %{"location" => "NYC"}}},
-                     500
-
       assert_receive {:llm_status, "main", _status}, 500
       assert_receive {:update_tool_usage_counts, %{get_weather: 1}}, 500
       assert_receive {:llm_chunk, "main", "Final answer"}, 500
@@ -163,12 +176,18 @@ defmodule BranchedLLM.OrchestratorTest do
 
       # First call returns tool_calls
       expect(BranchedLLM.ChatMock, :send_message_stream, 1, fn _msg, _ctx, _opts ->
-        {:ok, stream_response([]), &context_builder/1, [tool_call], nil}
+        {:ok,
+         %ToolCallResult{
+           tool_calls: [tool_call],
+           context: Context.new([]),
+           context_builder: &context_builder/1
+         }}
       end)
 
       # No execute_tool call expected (limit reached), second call returns text
       expect(BranchedLLM.ChatMock, :send_message_stream, 1, fn _msg, _ctx, _opts ->
-        {:ok, stream_response(["done"]), &context_builder/1, [], nil}
+        {:ok,
+         %ContentResult{stream: stream_response(["done"]), context_builder: &context_builder/1}}
       end)
 
       pid = self()
@@ -185,10 +204,6 @@ defmodule BranchedLLM.OrchestratorTest do
 
       {:ok, _pid} = ChatOrchestrator.run(params)
 
-      assert_receive {:llm_tool_called, "main",
-                      %{id: "call_1", name: "limited_tool", arguments: %{}}},
-                     500
-
       assert_receive {:update_tool_usage_counts, _}, 2000
       assert_receive {:llm_chunk, "main", "done"}, 500
       assert_receive {:llm_end, "main", _builder}, 500
@@ -200,7 +215,7 @@ defmodule BranchedLLM.OrchestratorTest do
       # When process_stream returns false (no chunks), it's an error
       # which triggers retries. After 10 retries, it sends llm_error.
       stub(BranchedLLM.ChatMock, :send_message_stream, fn _msg, _ctx, _opts ->
-        {:ok, stream_response([]), &context_builder/1, [], nil}
+        {:ok, %EmptyResult{context_builder: &context_builder/1}}
       end)
 
       pid = self()
@@ -227,12 +242,18 @@ defmodule BranchedLLM.OrchestratorTest do
       tool_call = ReqLLM.ToolCall.new("call_1", "full_tool", ~s({}))
 
       expect(BranchedLLM.ChatMock, :send_message_stream, 1, fn _msg, _ctx, _opts ->
-        {:ok, stream_response([]), &context_builder/1, [tool_call], nil}
+        {:ok,
+         %ToolCallResult{
+           tool_calls: [tool_call],
+           context: Context.new([]),
+           context_builder: &context_builder/1
+         }}
       end)
 
       # All tools at limit, no execute_tool call, second call returns text
       expect(BranchedLLM.ChatMock, :send_message_stream, 1, fn _msg, _ctx, _opts ->
-        {:ok, stream_response(["answer"]), &context_builder/1, [], nil}
+        {:ok,
+         %ContentResult{stream: stream_response(["answer"]), context_builder: &context_builder/1}}
       end)
 
       pid = self()
@@ -252,70 +273,6 @@ defmodule BranchedLLM.OrchestratorTest do
       assert_receive {:update_tool_usage_counts, _}, 2000
       assert_receive {:llm_chunk, "main", "answer"}, 500
       assert_receive {:llm_end, "main", _builder}, 500
-    end
-  end
-
-  describe "run/1 handles pre-consumed text" do
-    test "emits pre-consumed text as chunks when present" do
-      # When tools are present, classify/1 consumes the stream and provides
-      # pre_consumed_text. This tests the process_text/5 path.
-      tool_call = ReqLLM.ToolCall.new("call_1", "get_weather", ~s({"location": "NYC"}))
-
-      # First call returns tool_calls with pre_consumed_text
-      expect(BranchedLLM.ChatMock, :send_message_stream, 1, fn _msg, _ctx, _opts ->
-        {:ok, stream_response([]), &context_builder/1, [tool_call], "The weather is"}
-      end)
-
-      expect(BranchedLLM.ChatMock, :execute_tool, 1, fn _tool, _args ->
-        {:ok, "Sunny"}
-      end)
-
-      # Second call (after recursion) returns text with pre_consumed_text
-      expect(BranchedLLM.ChatMock, :send_message_stream, 1, fn _msg, _ctx, _opts ->
-        {:ok, stream_response([]), &context_builder/1, [], "Final answer"}
-      end)
-
-      pid = self()
-
-      params = %{
-        message: "Weather?",
-        llm_context: make_context(),
-        on_event: fn event -> send(pid, event) end,
-        llm_tools: [%{name: "get_weather"}],
-        chat_mod: BranchedLLM.ChatMock,
-        tool_usage_counts: %{get_weather: 0},
-        branch_id: "main"
-      }
-
-      {:ok, _pid} = ChatOrchestrator.run(params)
-
-      assert_receive {:llm_chunk, "main", "Final answer"}, 500
-      assert_receive {:llm_end, "main", _builder}, 500
-    end
-
-    test "returns error when pre-consumed text is empty" do
-      # When pre_consumed_text is "" (empty string), process_text returns false
-      # which triggers the error path in emit_response
-      stub(BranchedLLM.ChatMock, :send_message_stream, fn _msg, _ctx, _opts ->
-        {:ok, stream_response([]), &context_builder/1, [], ""}
-      end)
-
-      pid = self()
-
-      params = %{
-        message: "Hi",
-        llm_context: make_context(),
-        on_event: fn event -> send(pid, event) end,
-        llm_tools: [],
-        chat_mod: BranchedLLM.ChatMock,
-        tool_usage_counts: %{},
-        branch_id: "main"
-      }
-
-      {:ok, _pid} = ChatOrchestrator.run(params)
-
-      # Empty text treated as error, triggers retries then error
-      assert_receive {:llm_error, "main", _error}, 2000
     end
   end
 

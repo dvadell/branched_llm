@@ -3,9 +3,9 @@ defmodule BranchedLLM.LLM.StreamParser do
   A pure functional module for parsing and processing LLM response streams.
 
   Provides utilities for:
-    * Detecting stream intent (tool call vs content)
-    * Extracting tool calls from fragmented stream chunks
-    * Consuming streams into text
+  * Detecting stream intent (tool call vs content)
+  * Extracting tool calls from fragmented stream chunks
+  * Consuming streams into text
 
   ## Example
 
@@ -13,10 +13,12 @@ defmodule BranchedLLM.LLM.StreamParser do
       tool_calls = BranchedLLM.LLM.StreamParser.extract_tool_calls(consumed ++ Enum.to_list(remaining))
 
   """
+
   alias ReqLLM.StreamChunk
   alias ReqLLM.ToolCall
 
   @type stream_chunk :: StreamChunk.t()
+
   @type intent_result ::
           {:tool_call, list(stream_chunk()), Enumerable.t()}
           | {:content, list(stream_chunk()), Enumerable.t()}
@@ -26,9 +28,9 @@ defmodule BranchedLLM.LLM.StreamParser do
   Peeks at the stream to determine if the LLM is starting a tool call or content.
 
   Returns one of:
-    * `{:tool_call, consumed_chunks, remaining_stream}`
-    * `{:content, consumed_chunks, remaining_stream}`
-    * `{:empty, consumed_chunks}`
+  * `{:tool_call, consumed_chunks, remaining_stream}`
+  * `{:content, consumed_chunks, remaining_stream}`
+  * `{:empty, consumed_chunks}`
   """
   @spec consume_until_intent(Enumerable.t()) :: intent_result()
   def consume_until_intent(stream) do
@@ -56,7 +58,7 @@ defmodule BranchedLLM.LLM.StreamParser do
   """
   @spec extract_tool_calls(list(stream_chunk())) :: list(ToolCall.t())
   def extract_tool_calls(chunks) do
-    base_calls = Enum.filter(chunks, fn chunk -> Map.get(chunk, :type) == :tool_call end)
+    base_calls = Enum.filter(chunks, fn chunk -> chunk.type == :tool_call end)
     fragments = extract_fragments(chunks)
 
     # Merge and deduplicate by ID
@@ -70,8 +72,7 @@ defmodule BranchedLLM.LLM.StreamParser do
   """
   @spec consume_to_text(Enumerable.t()) :: String.t()
   def consume_to_text(stream) do
-    stream
-    |> Enum.reduce("", &accumulate_text/2)
+    stream |> Enum.reduce("", &accumulate_text/2)
   end
 
   @doc """
@@ -94,20 +95,16 @@ defmodule BranchedLLM.LLM.StreamParser do
   defp extract_fragments(chunks) do
     chunks
     |> Enum.filter(fn chunk ->
-      Map.get(chunk, :type) == :meta and
-        match?(%{tool_call_args: %{index: _}}, Map.get(chunk, :metadata, %{}))
+      chunk.type == :meta and
+        match?(%{tool_call_args: %{index: _}}, chunk.metadata)
     end)
     |> Enum.group_by(fn chunk ->
-      meta = Map.get(chunk, :metadata, %{})
-      args = Map.get(meta, :tool_call_args, %{})
-      Map.get(args, :index)
+      Map.get(chunk.metadata, :tool_call_args, %{})[:index]
     end)
     |> Map.new(fn {idx, meta_chunks} ->
       json =
         Enum.map_join(meta_chunks, "", fn chunk ->
-          meta = Map.get(chunk, :metadata, %{})
-          args = Map.get(meta, :tool_call_args, %{})
-          Map.get(args, :fragment, "")
+          Map.get(chunk.metadata, :tool_call_args, %{})[:fragment] || ""
         end)
 
       {idx, json}
@@ -115,10 +112,10 @@ defmodule BranchedLLM.LLM.StreamParser do
   end
 
   defp build_tool_call(call, fragments) do
-    metadata = Map.get(call, :metadata, %{})
-    index = Map.get(metadata, :index)
-    id = Map.get(metadata, :id)
-    name = Map.get(call, :name) || Map.get(metadata, :name)
+    metadata = call.metadata
+    index = metadata[:index]
+    id = metadata[:id]
+    name = call.name || metadata[:name]
 
     arguments_json =
       case Map.get(fragments, index) do
@@ -133,7 +130,7 @@ defmodule BranchedLLM.LLM.StreamParser do
   end
 
   defp extract_arguments_from_call(call, metadata) do
-    call_args = Map.get(call, :arguments) || Map.get(metadata, :arguments)
+    call_args = call.arguments || metadata[:arguments]
 
     cond do
       is_binary(call_args) -> call_args
