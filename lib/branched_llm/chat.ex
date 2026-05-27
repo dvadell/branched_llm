@@ -46,43 +46,64 @@ defmodule BranchedLLM.Chat do
 
   * `:model` - The model to use (defaults to the model specified in the application config).
   * `:tools` - A list of `ReqLLM.Tool` structs to provide to the LLM.
+  * `:schema` - A JSON Schema map; when provided, the response is a validated map instead of raw text.
+  * `:schema_max_retries` - Maximum retries on schema validation failure (default: 2).
   """
   @impl true
   @spec send_message(String.t(), Context.t(), keyword()) ::
-          {:ok, String.t(), Context.t()} | {:error, term()}
+          {:ok, String.t() | map(), Context.t()} | {:error, term()}
   def send_message(message, context, opts \\ []) do
     config = build_config(opts)
 
     parent = self()
     ref = make_ref()
 
+    schema = Keyword.get(opts, :schema)
+
     on_event = fn
       {:llm_chunk, _id, chunk} -> send(parent, {ref, :chunk, chunk})
-      {:llm_end, _id, full_text} -> send(parent, {ref, :end, full_text})
+      {:llm_end, _id, payload} -> send(parent, {ref, :end, payload})
       {:llm_error, _id, err} -> send(parent, {ref, :error, err})
       _ -> :ok
     end
 
     updated_context = add_user_message(context, message)
 
-    params = %{
-      llm_context: updated_context,
-      on_event: on_event,
-      llm_tools: config.tools,
-      chat_mod: __MODULE__,
-      tool_usage_counts: %{},
-      branch_id: "sync-call"
-    }
+    params =
+      %{
+        llm_context: updated_context,
+        on_event: on_event,
+        llm_tools: config.tools,
+        chat_mod: __MODULE__,
+        tool_usage_counts: %{},
+        branch_id: "sync-call"
+      }
+      |> maybe_put_schema_param(opts)
+      |> maybe_put_schema_max_retries_param(opts)
 
     {:ok, _pid} = BranchedLLM.ChatOrchestrator.run(params)
-    wait_for_sync_result(ref, "", updated_context)
+    wait_for_sync_result(ref, "", updated_context, schema)
   end
 
-  defp wait_for_sync_result(ref, acc, context) do
+  defp wait_for_sync_result(ref, acc, context, nil) do
     receive do
-      {^ref, :chunk, chunk} -> wait_for_sync_result(ref, acc <> chunk, context)
+      {^ref, :chunk, chunk} -> wait_for_sync_result(ref, acc <> chunk, context, nil)
       {^ref, :end, full_text} -> {:ok, full_text, add_assistant_message(context, full_text)}
       {^ref, :error, err} -> {:error, err}
+    after
+      60_000 -> {:error, "Timed out waiting for LLM response"}
+    end
+  end
+
+  # When a schema is provided, :llm_end delivers a validated map instead of
+  # raw text — return it directly without concatenating chunks.
+  defp wait_for_sync_result(ref, _acc, context, _schema) do
+    receive do
+      {^ref, :end, validated_map} when is_map(validated_map) ->
+        {:ok, validated_map, context}
+
+      {^ref, :error, err} ->
+        {:error, err}
     after
       60_000 -> {:error, "Timed out waiting for LLM response"}
     end
@@ -301,6 +322,20 @@ defmodule BranchedLLM.Chat do
 
   defp maybe_put_provider_options_from_opts(opts, po),
     do: Keyword.put(opts, :provider_options, po)
+
+  defp maybe_put_schema_param(params, opts) do
+    case Keyword.get(opts, :schema) do
+      nil -> params
+      schema -> Map.put(params, :schema, schema)
+    end
+  end
+
+  defp maybe_put_schema_max_retries_param(params, opts) do
+    case Keyword.get(opts, :schema_max_retries) do
+      nil -> params
+      n -> Map.put(params, :schema_max_retries, n)
+    end
+  end
 
   @doc false
   @impl true

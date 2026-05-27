@@ -246,12 +246,13 @@ schema = %{
   "required" => ["invoice_number", "amount", "due_date"]
 }
 
-context =
+context = (
   "You are an invoice parser"
   |> Chat.new_context()
   |> ReqLLM.Context.append(
     ReqLLM.Context.user("Extract: Invoice INV-2024-089 for $450.00 due July 1, 2024")
   )
+)
 
 ChatOrchestrator.run(%{
   llm_context: context,

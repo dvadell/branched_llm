@@ -29,7 +29,7 @@ defmodule BranchedLLM.ChatBehaviour do
   @callback send_message_stream(Context.t(), keyword()) ::
               {:ok, StreamResult.t()} | {:error, term()}
   @callback send_message(String.t(), Context.t(), keyword()) ::
-              {:ok, String.t(), Context.t()} | {:error, term()}
+              {:ok, String.t() | map(), Context.t()} | {:error, term()}
   @callback execute_tool(Tool.t(), map()) :: {:ok, term()} | {:error, term()}
   @callback health_check() :: :ok | {:error, term()}
   @callback default_model() :: ReqLLM.model_input()
