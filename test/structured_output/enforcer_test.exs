@@ -64,8 +64,8 @@ defmodule BranchedLLM.StructuredOutput.EnforcerTest do
 
   describe "resolve_provider/1" do
     test "resolves provider from valid model string" do
-      result = Enforcer.resolve_provider("openai:gpt-4")
-      assert is_atom(result)
+      result = Enforcer.resolve_provider("ollama:cara-cpu")
+      assert result == :ollama
     end
 
     test "returns :unknown for invalid model string" do
@@ -135,7 +135,10 @@ defmodule BranchedLLM.StructuredOutput.EnforcerTest do
 
       result = Enforcer.prepare_request(:ollama, request, schema)
 
-      assert Keyword.get(result.provider_options, :format) == schema
+      assert Keyword.get(result.provider_options, :response_format) == %{
+               type: "json_schema",
+               json_schema: schema
+             }
     end
 
     test "dispatches to fallback enforcer for unknown" do

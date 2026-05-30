@@ -44,7 +44,7 @@ defmodule BranchedLLM.OrchestratorStructuredOutputTest do
 
       valid_json = ~s({"invoice_number": "INV-001", "amount": 200.0})
 
-      stub(BranchedLLM.ChatMock, :default_model, fn -> "openai:gpt-4" end)
+      stub(BranchedLLM.ChatMock, :default_model, fn -> "ollama:cara-cpu" end)
 
       expect(BranchedLLM.ChatMock, :send_message_stream, 1, fn _ctx, _opts ->
         {:ok, %ContentResult{stream: stream_response([valid_json])}}
@@ -205,7 +205,7 @@ defmodule BranchedLLM.OrchestratorStructuredOutputTest do
 
       invalid_json = ~s({"invoice_number": "INV-001"})
 
-      stub(BranchedLLM.ChatMock, :default_model, fn -> "openai:gpt-4" end)
+      stub(BranchedLLM.ChatMock, :default_model, fn -> "ollama:cara-cpu" end)
 
       # First call (original) + 2 retries = 3 calls total
       expect(BranchedLLM.ChatMock, :send_message_stream, 3, fn _ctx, _opts ->
@@ -243,7 +243,7 @@ defmodule BranchedLLM.OrchestratorStructuredOutputTest do
       invalid_json = ~s({"wrong": "field"})
       valid_json = ~s({"name": "Alice"})
 
-      stub(BranchedLLM.ChatMock, :default_model, fn -> "openai:gpt-4" end)
+      stub(BranchedLLM.ChatMock, :default_model, fn -> "ollama:cara-cpu" end)
 
       # First call returns invalid
       expect(BranchedLLM.ChatMock, :send_message_stream, 1, fn _ctx, _opts ->
@@ -284,7 +284,7 @@ defmodule BranchedLLM.OrchestratorStructuredOutputTest do
 
       invalid_json = ~s({"wrong": "field"})
 
-      stub(BranchedLLM.ChatMock, :default_model, fn -> "openai:gpt-4" end)
+      stub(BranchedLLM.ChatMock, :default_model, fn -> "ollama:cara-cpu" end)
 
       # First call returns invalid
       expect(BranchedLLM.ChatMock, :send_message_stream, 1, fn _ctx, _opts ->
@@ -330,7 +330,7 @@ defmodule BranchedLLM.OrchestratorStructuredOutputTest do
 
       invalid_json = ~s({"wrong": "field"})
 
-      stub(BranchedLLM.ChatMock, :default_model, fn -> "openai:gpt-4" end)
+      stub(BranchedLLM.ChatMock, :default_model, fn -> "ollama:cara-cpu" end)
 
       # First call returns invalid content
       expect(BranchedLLM.ChatMock, :send_message_stream, 1, fn _ctx, _opts ->
@@ -375,7 +375,7 @@ defmodule BranchedLLM.OrchestratorStructuredOutputTest do
 
       invalid_json = ~s({"wrong": "field"})
 
-      stub(BranchedLLM.ChatMock, :default_model, fn -> "openai:gpt-4" end)
+      stub(BranchedLLM.ChatMock, :default_model, fn -> "ollama:cara-cpu" end)
 
       # First call returns invalid
       expect(BranchedLLM.ChatMock, :send_message_stream, 1, fn _ctx, _opts ->
@@ -422,7 +422,7 @@ defmodule BranchedLLM.OrchestratorStructuredOutputTest do
       invalid_json = ~s({"wrong": "field"})
       regular_tool_call = ReqLLM.ToolCall.new("call_1", "other_tool", ~s({}))
 
-      stub(BranchedLLM.ChatMock, :default_model, fn -> "openai:gpt-4" end)
+      stub(BranchedLLM.ChatMock, :default_model, fn -> "ollama:cara-cpu" end)
 
       # First call returns invalid content
       expect(BranchedLLM.ChatMock, :send_message_stream, 1, fn _ctx, _opts ->
@@ -476,7 +476,7 @@ defmodule BranchedLLM.OrchestratorStructuredOutputTest do
           ~s({"name": "Eve"})
         )
 
-      stub(BranchedLLM.ChatMock, :default_model, fn -> "openai:gpt-4" end)
+      stub(BranchedLLM.ChatMock, :default_model, fn -> "ollama:cara-cpu" end)
 
       # First call returns invalid content
       expect(BranchedLLM.ChatMock, :send_message_stream, 1, fn _ctx, _opts ->
@@ -532,7 +532,7 @@ defmodule BranchedLLM.OrchestratorStructuredOutputTest do
           ~s({"name": "Frank", "age": 30})
         )
 
-      stub(BranchedLLM.ChatMock, :default_model, fn -> "openai:gpt-4" end)
+      stub(BranchedLLM.ChatMock, :default_model, fn -> "ollama:cara-cpu" end)
 
       # First call returns invalid content
       expect(BranchedLLM.ChatMock, :send_message_stream, 1, fn _ctx, _opts ->
@@ -585,7 +585,7 @@ defmodule BranchedLLM.OrchestratorStructuredOutputTest do
       # Instead, let's test the valid retry path with a non-structured tool call.
       regular_tool = ReqLLM.ToolCall.new("call_1", "other_tool", ~s({}))
 
-      stub(BranchedLLM.ChatMock, :default_model, fn -> "openai:gpt-4" end)
+      stub(BranchedLLM.ChatMock, :default_model, fn -> "ollama:cara-cpu" end)
 
       # First call returns invalid
       expect(BranchedLLM.ChatMock, :send_message_stream, 1, fn _ctx, _opts ->
@@ -629,7 +629,7 @@ defmodule BranchedLLM.OrchestratorStructuredOutputTest do
         "required" => ["x"]
       }
 
-      stub(BranchedLLM.ChatMock, :default_model, fn -> "openai:gpt-4" end)
+      stub(BranchedLLM.ChatMock, :default_model, fn -> "ollama:cara-cpu" end)
 
       # schema_max_retries: 0 means 1 attempt total (no retries)
       expect(BranchedLLM.ChatMock, :send_message_stream, 1, fn _ctx, _opts ->
@@ -665,7 +665,7 @@ defmodule BranchedLLM.OrchestratorStructuredOutputTest do
 
       valid_json = ~s({"x": "hello"})
 
-      stub(BranchedLLM.ChatMock, :default_model, fn -> "openai:gpt-4" end)
+      stub(BranchedLLM.ChatMock, :default_model, fn -> "ollama:cara-cpu" end)
 
       expect(BranchedLLM.ChatMock, :send_message_stream, 1, fn _ctx, opts ->
         # Verify that provider_options are forwarded
@@ -701,7 +701,7 @@ defmodule BranchedLLM.OrchestratorStructuredOutputTest do
 
       invalid_json = ~s({"wrong": "field"})
 
-      stub(BranchedLLM.ChatMock, :default_model, fn -> "openai:gpt-4" end)
+      stub(BranchedLLM.ChatMock, :default_model, fn -> "ollama:cara-cpu" end)
 
       # 1 original + 2 retries = 3 calls
       expect(BranchedLLM.ChatMock, :send_message_stream, 3, fn _ctx, _opts ->
@@ -737,7 +737,7 @@ defmodule BranchedLLM.OrchestratorStructuredOutputTest do
 
       invalid_json = ~s({"wrong": "field"})
 
-      stub(BranchedLLM.ChatMock, :default_model, fn -> "openai:gpt-4" end)
+      stub(BranchedLLM.ChatMock, :default_model, fn -> "ollama:cara-cpu" end)
 
       # Only 1 call (no retries)
       expect(BranchedLLM.ChatMock, :send_message_stream, 1, fn _ctx, _opts ->
@@ -766,7 +766,7 @@ defmodule BranchedLLM.OrchestratorStructuredOutputTest do
 
   describe "run/1 without schema" do
     test "emits full text as before (backward compatibility)" do
-      stub(BranchedLLM.ChatMock, :default_model, fn -> "openai:gpt-4" end)
+      stub(BranchedLLM.ChatMock, :default_model, fn -> "ollama:cara-cpu" end)
 
       expect(BranchedLLM.ChatMock, :send_message_stream, 1, fn _ctx, _opts ->
         {:ok, %ContentResult{stream: stream_response(["Hello", " world"])}}
@@ -861,7 +861,7 @@ defmodule BranchedLLM.OrchestratorStructuredOutputTest do
         "required" => ["x"]
       }
 
-      stub(BranchedLLM.ChatMock, :default_model, fn -> "openai:gpt-4" end)
+      stub(BranchedLLM.ChatMock, :default_model, fn -> "ollama:cara-cpu" end)
 
       # Returns empty stream - no tokens
       expect(BranchedLLM.ChatMock, :send_message_stream, 10, fn _ctx, _opts ->
@@ -957,7 +957,7 @@ defmodule BranchedLLM.OrchestratorStructuredOutputTest do
       invalid_json = ~s({"wrong": "field"})
       metadata = %{usage: %{input_tokens: 5, output_tokens: 10}}
 
-      stub(BranchedLLM.ChatMock, :default_model, fn -> "openai:gpt-4" end)
+      stub(BranchedLLM.ChatMock, :default_model, fn -> "ollama:cara-cpu" end)
 
       # First call returns invalid content with metadata
       expect(BranchedLLM.ChatMock, :send_message_stream, 1, fn _ctx, _opts ->

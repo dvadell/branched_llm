@@ -10,9 +10,8 @@ defmodule BranchedLLM.Chat do
   All configuration is under `:branched_llm` and can be set via environment variables:
 
       config :branched_llm,
-        ai_model: System.get_env("LLM_MODEL") || "openai:cara-cpu",
-        base_url: System.get_env("LLM_BASE_URL") || "http://localhost:11434",
-        api_key: System.get_env("NVIDIA_API_KEY") || "ollama"
+        ai_model: System.get_env("LLM_MODEL") || "ollama:cara-cpu",
+        base_url: System.get_env("LLM_BASE_URL") || "http://localhost:11434"
   """
 
   import ReqLLM.Context
@@ -211,9 +210,7 @@ defmodule BranchedLLM.Chat do
   @impl true
   def default_model do
     model_string =
-      Application.get_env(:branched_llm, :ai_model, "openai:cara-cpu")
-
-    Application.get_env(:branched_llm, :ai_model, "openai:cara-cpu")
+      Application.get_env(:branched_llm, :ai_model, "ollama:cara-cpu")
 
     case resolve_model(model_string) do
       {:ok, model} -> model
@@ -342,13 +339,12 @@ defmodule BranchedLLM.Chat do
   @spec stream_text(ReqLLM.model_input(), Context.t(), keyword()) ::
           {:ok, StreamResponse.t()} | {:error, term()}
   def stream_text(model, context, opts) do
-    %{model_endpoint: model_endpoint, api_key: api_key} = endpoints()
+    %{model_endpoint: model_endpoint} = endpoints()
     model_endpoint = Keyword.get(opts, :base_url, model_endpoint)
     tools = Keyword.get(opts, :tools, [])
     provider_options = Keyword.get(opts, :provider_options, [])
 
     base_opts = [tools: tools, base_url: model_endpoint]
-    base_opts = if api_key, do: Keyword.put(base_opts, :api_key, api_key), else: base_opts
 
     stream_opts =
       if provider_options != [] do
@@ -494,15 +490,11 @@ defmodule BranchedLLM.Chat do
   @spec endpoints() :: %{
           base_url: String.t(),
           model_endpoint: String.t(),
-          health_endpoint: String.t(),
-          api_key: String.t() | nil
+          health_endpoint: String.t()
         }
   defp endpoints do
     config_url = Application.get_env(:branched_llm, :base_url) || "http://localhost:11434"
-    api_key = Application.get_env(:branched_llm, :api_key)
 
-    # If the config URL already includes /v1, use it as-is for model_endpoint.
-    # Otherwise append /v1 (backward compat with Ollama-style base URLs).
     uri = URI.parse(config_url)
     host = uri.host || "localhost"
     scheme = uri.scheme || "http"
@@ -519,8 +511,7 @@ defmodule BranchedLLM.Chat do
     %{
       base_url: base_url,
       model_endpoint: model_endpoint,
-      health_endpoint: base_url <> "/api/tags",
-      api_key: api_key
+      health_endpoint: base_url <> "/api/tags"
     }
   end
 

@@ -16,7 +16,7 @@ defmodule BranchedLLM.StructuredOutput.Enforcer do
   @doc """
   Resolves the provider atom from a model spec (string or `%LLMDB.Model{}`).
 
-  Strings like `"openai:gpt-4"` are split on `:` to extract the provider.
+  Strings like `"ollama:cara-cpu"` are split on `:` to extract the provider.
   `%LLMDB.Model{}` structs use the `:provider` field directly.
   """
   @spec resolve_provider(ReqLLM.model_input()) :: atom()

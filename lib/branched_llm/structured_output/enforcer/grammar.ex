@@ -1,27 +1,33 @@
 defmodule BranchedLLM.StructuredOutput.Enforcer.Grammar do
   @moduledoc """
-  Ollama / llama.cpp structured output enforcement via grammar-constrained decoding.
+  Ollama structured output enforcement via the OpenAI-compatible `response_format`.
 
-  The JSON schema is forwarded as a grammar specification in `provider_options`.
-  Enforcement is at the sampling level — invalid tokens are masked during generation.
+  The JSON schema is forwarded as `response_format` in `provider_options`, which
+  the Ollama provider (req_llm >= 1.13.0) natively supports through its
+  `/v1/chat/completions` endpoint. Enforcement is at the sampling level —
+  invalid tokens are masked during generation.
   """
 
   @behaviour BranchedLLM.StructuredOutput.Enforcer
 
   @impl true
   @doc """
-  Injects the schema as a `grammar` (GBNF) parameter in provider_options.
+  Injects the schema as `response_format` (json_schema mode) in provider_options.
 
-  Note: Converting JSON Schema to GBNF is complex. For Ollama, the `format`
-  parameter accepts a JSON Schema directly (Ollama >= 0.1.35). We pass it
-  through provider_options so the Ollama provider can handle it natively.
+  The Ollama provider's `/v1` endpoint accepts the same `response_format` structure
+  as OpenAI: `%{type: "json_schema", json_schema: %{name: ..., schema: ...}}`.
   """
   def prepare_request(request, schema) do
+    response_format = %{
+      type: "json_schema",
+      json_schema: schema
+    }
+
     provider_options = Map.get(request, :provider_options, [])
 
     updated_provider_options =
       provider_options
-      |> Keyword.put(:format, schema)
+      |> Keyword.put(:response_format, response_format)
 
     Map.put(request, :provider_options, updated_provider_options)
   end

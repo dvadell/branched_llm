@@ -18,10 +18,9 @@ defmodule BranchedLLM do
   ## Configuration
 
       config :branched_llm,
-        ai_model: System.get_env("LLM_MODEL") || "openai:cara-cpu",
-        base_url: System.get_env("LLM_BASE_URL") || "http://localhost:11434",
-        api_key: System.get_env("NVIDIA_API_KEY") || "ollama"
-
+        ai_model: System.get_env("LLM_MODEL") || "ollama:cara-cpu",
+        base_url: System.get_env("LLM_BASE_URL") || "http://localhost:11434"
+   
   """
 
   alias BranchedLLM.{BranchedChat, ChatOrchestrator, Message}

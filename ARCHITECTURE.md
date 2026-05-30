@@ -171,9 +171,8 @@ All config lives under `:branched_llm` — environment-variable-driven, single s
 ```elixir
 # config/config.exs
 config :branched_llm,
-  ai_model: System.get_env("LLM_MODEL") || "openai:cara-cpu",
-  base_url: System.get_env("LLM_BASE_URL") || "http://host.docker.internal:11434",
-  api_key: System.get_env("NVIDIA_API_KEY") || "ollama"
+  ai_model: System.get_env("LLM_MODEL") || "ollama:cara-cpu",
+  base_url: System.get_env("LLM_BASE_URL") || "http://host.docker.internal:11434"
 ```
 
 `Chat.default_model/0` reads `:ai_model`, resolves `"provider:model_id"` strings into `%LLMDB.Model{}` structs via `ReqLLM.model/1`. `Chat.stream_text/3` passes `base_url` and `api_key` from `endpoints/0` directly to `ReqLLM.stream_text/3` as options, so `ReqLLM` never needs its own config block.

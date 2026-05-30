@@ -7,7 +7,7 @@ This guide walks you through using BranchedLLM — a wrapper around [ReqLLM](htt
 ## Prerequisites
 
 - Elixir ~> 1.15
-- An LLM API endpoint (OpenAI-compatible, Ollama, etc.)
+- An LLM API endpoint (Ollama, OpenAI, etc.)
 - Basic familiarity with Elixir
 
 ---
@@ -20,7 +20,7 @@ Add BranchedLLM to your `mix.exs`:
 def deps do
   [
     {:branched_llm, "~> 0.1.1"},
-    {:req_llm, "~> 1.11.0"},
+    {:req_llm, "~> 1.13.0"},
     {:ecto, "~> 3.13"}
   ]
 end
@@ -30,7 +30,7 @@ Configure your LLM provider in `config/config.exs`:
 
 ```elixir
 config :branched_llm,
-  ai_model: "openai:cara-cpu",
+  ai_model: "ollama:cara-cpu",
   base_url: "http://localhost:11434"
 ```
 
