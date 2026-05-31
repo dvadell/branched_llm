@@ -41,7 +41,6 @@ defmodule BranchedLLM.MixProject do
       {:req_llm, "~> 1.13.0"},
       {:ecto, "~> 3.13", optional: true},
       {:jason, "~> 1.2"},
-      {:ex_json_schema, "~> 0.10"},
       {:retry, "~> 0.18"},
       {:telemetry, "~> 1.0"},
       {:opentelemetry_api, "~> 1.0", optional: true},

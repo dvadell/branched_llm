@@ -864,7 +864,7 @@ defmodule BranchedLLM.OrchestratorStructuredOutputTest do
       stub(BranchedLLM.ChatMock, :default_model, fn -> "ollama:cara-cpu" end)
 
       # Returns empty stream - no tokens
-      expect(BranchedLLM.ChatMock, :send_message_stream, 10, fn _ctx, _opts ->
+      expect(BranchedLLM.ChatMock, :send_message_stream, 3, fn _ctx, _opts ->
         {:ok, %ContentResult{stream: stream_response([])}}
       end)
 

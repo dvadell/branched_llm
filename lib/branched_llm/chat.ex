@@ -3,6 +3,7 @@ defmodule BranchedLLM.Chat do
   Core chat functionality for interacting with LLM APIs.
 
   Handles message sending, streaming, and conversation context management.
+
   This is a default implementation of `BranchedLLM.ChatBehaviour` using `ReqLLM`.
 
   ## Configuration
@@ -15,12 +16,13 @@ defmodule BranchedLLM.Chat do
   """
 
   import ReqLLM.Context
+
   require Logger
 
   alias BranchedLLM.ContextManager
   alias BranchedLLM.LLM.StreamResult
   alias BranchedLLM.LLM.StreamResult.{ContentResult, EmptyResult, ErrorResult, ToolCallResult}
-  alias BranchedLLM.StructuredOutput.Enforcer
+
   alias ReqLLM.Context
   alias ReqLLM.StreamChunk
   alias ReqLLM.StreamResponse
@@ -43,10 +45,10 @@ defmodule BranchedLLM.Chat do
 
   ## Options
 
-  * `:model` - The model to use (defaults to the model specified in the application config).
-  * `:tools` - A list of `ReqLLM.Tool` structs to provide to the LLM.
-  * `:schema` - A JSON Schema map; when provided, the response is a validated map instead of raw text.
-  * `:schema_max_retries` - Maximum retries on schema validation failure (default: 2).
+    * `:model` - The model to use (defaults to the model specified in the application config).
+    * `:tools` - A list of `ReqLLM.Tool` structs to provide to the LLM.
+    * `:schema` - A JSON Schema map; when provided, the response is a validated map instead of raw text.
+    * `:schema_max_retries` - Maximum retries on schema validation failure (default: 2).
   """
   @impl true
   @spec send_message(String.t(), Context.t(), keyword()) ::
@@ -56,7 +58,6 @@ defmodule BranchedLLM.Chat do
 
     parent = self()
     ref = make_ref()
-
     schema = Keyword.get(opts, :schema)
 
     on_event = fn
@@ -81,6 +82,7 @@ defmodule BranchedLLM.Chat do
       |> maybe_put_schema_max_retries_param(opts)
 
     {:ok, _pid} = BranchedLLM.ChatOrchestrator.run(params)
+
     wait_for_sync_result(ref, "", updated_context, schema)
   end
 
@@ -98,11 +100,8 @@ defmodule BranchedLLM.Chat do
   # raw text — return it directly without concatenating chunks.
   defp wait_for_sync_result(ref, _acc, context, _schema) do
     receive do
-      {^ref, :end, validated_map} when is_map(validated_map) ->
-        {:ok, validated_map, context}
-
-      {^ref, :error, err} ->
-        {:error, err}
+      {^ref, :end, validated_map} when is_map(validated_map) -> {:ok, validated_map, context}
+      {^ref, :error, err} -> {:error, err}
     after
       60_000 -> {:error, "Timed out waiting for LLM response"}
     end
@@ -113,9 +112,9 @@ defmodule BranchedLLM.Chat do
 
   The result is one of three structs that clearly distinguishes the LLM's intent:
 
-  * `%ContentResult{}` — The LLM is streaming text content.
-  * `%ToolCallResult{}` — The LLM is invoking one or more tools.
-  * `%EmptyResult{}` — The LLM returned neither content nor tool calls.
+    * `%ContentResult{}` — The LLM is streaming text content.
+    * `%ToolCallResult{}` — The LLM is invoking one or more tools.
+    * `%EmptyResult{}` — The LLM returned neither content nor tool calls.
 
   ## Examples
 
@@ -126,26 +125,23 @@ defmodule BranchedLLM.Chat do
 
   ## Options
 
-  * `:model` - The model to use (defaults to the model specified in the application config).
-  * `:tools` - A list of `ReqLLM.Tool` structs to provide to the LLM.
-  * `:max_tokens` - Maximum context window tokens (overrides app config). See `BranchedLLM.ContextManager`.
-  * `:trim_callback` - Custom context trimming callback (overrides app config). See `BranchedLLM.ContextManager`.
+    * `:model` - The model to use (defaults to the model specified in the application config).
+    * `:tools` - A list of `ReqLLM.Tool` structs to provide to the LLM.
+    * `:max_tokens` - Maximum context window tokens (overrides app config). See `BranchedLLM.ContextManager`.
+    * `:trim_callback` - Custom context trimming callback (overrides app config). See `BranchedLLM.ContextManager`.
   """
   @impl true
   @spec send_message_stream(Context.t(), keyword()) ::
           {:ok, StreamResult.t()} | {:error, term()}
   def send_message_stream(context, opts \\ []) do
     config = build_config(opts)
-    schema = Keyword.get(opts, :schema)
     provider_options = Keyword.get(opts, :provider_options)
 
     call_opts =
       []
-      |> maybe_put_schema(schema)
       |> maybe_put_provider_options_from_opts(provider_options)
 
-    {trimmed_context, was_trimmed} =
-      ContextManager.trim(context, context_trim_opts(opts))
+    {trimmed_context, was_trimmed} = ContextManager.trim(context, context_trim_opts(opts))
 
     if was_trimmed do
       Logger.info(
@@ -209,8 +205,7 @@ defmodule BranchedLLM.Chat do
   @spec default_model() :: ReqLLM.model_input()
   @impl true
   def default_model do
-    model_string =
-      Application.get_env(:branched_llm, :ai_model, "ollama:cara-cpu")
+    model_string = Application.get_env(:branched_llm, :ai_model, "ollama:cara-cpu")
 
     case resolve_model(model_string) do
       {:ok, model} -> model
@@ -227,13 +222,9 @@ defmodule BranchedLLM.Chat do
       [provider_str, model_id] ->
         try do
           provider = String.to_existing_atom(provider_str)
-
-          # Use inline model spec to bypass LLMDB catalog lookup and
-          # avoid the "unverified model" warning for custom/local models.
           ReqLLM.model(%{provider: provider, id: model_id})
         rescue
-          ArgumentError ->
-            ReqLLM.model(model_string)
+          ArgumentError -> ReqLLM.model(model_string)
         end
 
       _ ->
@@ -268,10 +259,6 @@ defmodule BranchedLLM.Chat do
   @spec call_llm(ReqLLM.model_input(), Context.t(), list(), keyword()) ::
           {:ok, StreamResult.t()} | {:error, term()}
   defp call_llm(model, context, tools, opts) do
-    Logger.info("LLM call_llm starting with context: #{inspect(context)}")
-
-    start_time = :erlang.monotonic_time(:millisecond)
-
     stream_opts =
       [tools: tools]
       |> maybe_put_provider_options(opts)
@@ -279,28 +266,11 @@ defmodule BranchedLLM.Chat do
     result =
       case __MODULE__.stream_text(model, context, stream_opts) do
         {:ok, stream_response} ->
-          schema = Keyword.get(opts, :schema)
-
-          effective_tools =
-            if schema &&
-                 Enforcer.resolve_provider(model) == :anthropic do
-              synthetic_tool = Enforcer.build_synthetic_tool(schema)
-              tools ++ [synthetic_tool]
-            else
-              tools
-            end
-
-          {:ok, stream_result(stream_response, effective_tools)}
+          {:ok, stream_result(stream_response, tools)}
 
         {:error, reason} ->
           {:error, reason}
       end
-
-    end_time = :erlang.monotonic_time(:millisecond)
-
-    Logger.info(
-      "LLM call_llm(model: #{inspect(model)}, tools: #{length(tools)}) took #{end_time - start_time}ms"
-    )
 
     result
   end
@@ -311,9 +281,6 @@ defmodule BranchedLLM.Chat do
       po -> Keyword.put(stream_opts, :provider_options, po)
     end
   end
-
-  defp maybe_put_schema(opts, nil), do: opts
-  defp maybe_put_schema(opts, schema), do: Keyword.put(opts, :schema, schema)
 
   defp maybe_put_provider_options_from_opts(opts, nil), do: opts
 
@@ -358,12 +325,10 @@ defmodule BranchedLLM.Chat do
 
   # When no tools are provided, the stream is always content — no intent detection needed.
   @spec stream_result(StreamResponse.t(), list()) :: StreamResult.t()
-  defp stream_result(stream_response, []),
-    do: %ContentResult{stream: stream_response}
+  defp stream_result(stream_response, []), do: %ContentResult{stream: stream_response}
 
   # When tools are provided, classify the stream to determine intent.
-  defp stream_result(stream_response, _tools),
-    do: handle_stream_for_tools(stream_response)
+  defp stream_result(stream_response, _tools), do: handle_stream_for_tools(stream_response)
 
   # Consumes the full stream via classify/1 (which calls Enum.to_list
   # internally, keeping the StreamServer GenServer alive throughout).
@@ -380,15 +345,10 @@ defmodule BranchedLLM.Chat do
         }
 
       %{type: :final_answer, text: text} when is_binary(text) and text != "" ->
-        # The orchestrator iterates via StreamResponse.tokens/1, so
-        # wrap the classified text in a materialized stream chunk.
         chunk = StreamChunk.text(text)
         new_stream = [chunk]
-
         %ContentResult{stream: %{stream_response | stream: new_stream}}
 
-      # Unexpected stream classification - treat as empty result.
-      # Empty stream — explicit empty result, no dummy stream.
       _ ->
         %EmptyResult{}
     end
@@ -415,8 +375,7 @@ defmodule BranchedLLM.Chat do
       BranchedLLM.Chat.execute_tool(tool, args, cache: MyApp.ToolCache)
   """
   @impl true
-  @spec execute_tool(ReqLLM.Tool.t(), map(), keyword()) ::
-          {:ok, term()} | {:error, term()}
+  @spec execute_tool(ReqLLM.Tool.t(), map(), keyword()) :: {:ok, term()} | {:error, term()}
   def execute_tool(tool, args, opts \\ []) do
     cache_module = Keyword.get(opts, :cache, default_tool_cache())
 
@@ -430,11 +389,9 @@ defmodule BranchedLLM.Chat do
       {:ok, result} ->
         Logger.info("Tool '#{tool.name}' result retrieved from cache.")
 
-        :telemetry.execute(
-          [:branched_llm, :ai, :tool, :cache, :hit],
-          %{count: 1},
-          %{tool: tool.name}
-        )
+        :telemetry.execute([:branched_llm, :ai, :tool, :cache, :hit], %{count: 1}, %{
+          tool: tool.name
+        })
 
         {:ok, result}
 
@@ -464,13 +421,9 @@ defmodule BranchedLLM.Chat do
   @impl true
   def health_check do
     %{health_endpoint: health_endpoint} = endpoints()
-
     Logger.info("Checking AI health at: #{health_endpoint}")
 
-    case Req.new(
-           connect_options: [timeout: 1000],
-           retry: false
-         )
+    case Req.new(connect_options: [timeout: 1000], retry: false)
          |> maybe_attach_telemetry()
          |> Req.get(url: health_endpoint) do
       {:ok, %{status: 200}} ->
@@ -517,7 +470,6 @@ defmodule BranchedLLM.Chat do
 
   # OpenTelemetry helpers
   # Compile-time branching: when :otel_tracer is loaded, spans are created.
-
   if Code.ensure_loaded?(OpenTelemetry.Tracer) do
     require OpenTelemetry.Tracer
 

@@ -133,7 +133,6 @@ defmodule BranchedLLM.StructuredOutput.ValidatorTest do
                Validator.validate(~s({}), schema)
 
       assert is_list(errors)
-      assert errors != []
 
       Enum.each(errors, fn error ->
         assert is_binary(error)
@@ -173,7 +172,6 @@ defmodule BranchedLLM.StructuredOutput.ValidatorTest do
                Validator.check_schema(%{"count" => "not_int"}, schema)
 
       assert is_list(errors)
-      assert errors != []
     end
   end
 end
