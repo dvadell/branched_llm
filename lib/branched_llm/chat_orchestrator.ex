@@ -15,7 +15,7 @@ defmodule BranchedLLM.ChatOrchestrator do
     accumulated text of the assistant's response. When a schema is provided, this is a
     validated Elixir map instead of raw text.
   * `{:llm_status, branch_id, status}` — A status update (e.g., "Thinking...", "Using calculator...")
-  * `{:llm_error, branch_id, error_message}` — An error occurred during the LLM request.
+  * `{:llm_error, branch_id, error}` — An error occurred during the LLM request. `error` is a user-friendly string (e.g. rate-limit messages, API errors) or a `%ValidationError{}` struct when schema validation fails after all retries.
   * `{:llm_metadata, branch_id, metadata}` — Token-usage and other metadata from the LLM provider.
   * `{:update_tool_usage_counts, counts}` — Updated tool usage counts for the caller to track
 
@@ -80,9 +80,6 @@ defmodule BranchedLLM.ChatOrchestrator do
       :ok -> :ok
       {:error, reason} -> params.on_event.({:llm_error, params.branch_id, reason})
     end
-  rescue
-    exception ->
-      params.on_event.({:llm_error, params.branch_id, Exception.message(exception)})
   end
 
   def build_stream_opts(params) do

@@ -517,25 +517,24 @@ For precise token counting, provide a custom `trim_callback` that uses the model
 
 ## Step 8: Error Handling
 
-BranchedLLM provides user-friendly error messages:
+Errors are returned as `{:error, message}` tuples:
 
 ```elixir
-try do
-  Chat.send_message("Hello", context)
-rescue
-  e ->
-    friendly_message = BranchedLLM.LLMErrorFormatter.format(e)
-    # => "The AI is busy. Wait a moment and try again later."
-    # => "API error (status 429). Please try again."
-    # => "API error (status 500). Please try again."
+case Chat.send_message("Hello", context) do
+  {:ok, response, new_context} ->
+    IO.puts(response)
+  {:error, message} ->
+    IO.puts("Error: #{message}")
 end
 ```
 
-Rate limit errors (429) include retry delay information when the API provides it:
+The `message` is a user-friendly string. For example, when the AI is busy:
 
 ```
 "The AI is busy. Wait a moment and try again later. Please retry in 30s."
 ```
+
+Rate limit errors (429) include retry delay information when the API provides it.
 
 ---
 

@@ -97,7 +97,6 @@ You might prefer to use `ReqLLM` without the `BranchedLLM` wrapper if:
 | `ReqLLM.Tool.execute/2` | `BranchedLLM.ToolHandler` | Orchestrates the execution of *multiple* tool calls and context injection. |
 | N/A | `BranchedLLM.ToolCache` | Adds an Ecto-backed persistence layer for tool results (missing in ReqLLM). |
 | N/A | `BranchedLLM.ContextManager` | Enforces context window limits with token estimation and pluggable trim strategies. |
-| N/A | `BranchedLLM.LLMErrorFormatter`| Translates raw HTTP/API errors into user-friendly strings. |
 
 ## Conclusion
 

@@ -23,7 +23,45 @@ defmodule BranchedLLM.ChatOrchestrator.CallbackStream do
         {:error, "Error: #{inspect(reason)}"}
     end
   rescue
-    exception -> {:error, Exception.message(exception)}
+    e in ReqLLM.Error.API.Request ->
+      handle_api_request_error(e)
+
+    exception ->
+      {:error, Exception.message(exception)}
+  end
+
+  defp handle_api_request_error(%ReqLLM.Error.API.Request{
+         status: 429,
+         response_body: response_body
+       }) do
+    {:error, format_rate_limit_error(response_body)}
+  end
+
+  defp handle_api_request_error(%ReqLLM.Error.API.Request{status: status}) do
+    {:error, "API error (status #{status}). Please try again."}
+  end
+
+  defp format_rate_limit_error(response_body) do
+    retry_delay = extract_retry_delay(response_body)
+    base_message = "The AI is busy. Wait a moment and try again later."
+
+    case retry_delay do
+      nil -> base_message
+      delay -> base_message <> " Please retry in #{delay}."
+    end
+  end
+
+  defp extract_retry_delay(response_body) do
+    details = Map.get(response_body, "details", [])
+
+    case Enum.find(details, &retry_info?/1) do
+      %{"retryDelay" => delay} when is_binary(delay) -> delay
+      _ -> nil
+    end
+  end
+
+  defp retry_info?(detail) do
+    Map.get(detail, "@type") == "type.googleapis.com/google.rpc.RetryInfo"
   end
 
   defp for_event(params) do

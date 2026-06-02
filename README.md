@@ -232,7 +232,6 @@ branched_chat = BranchedChat.switch_branch(branched_chat, "main")
 | `BranchedLLM.ToolCache` | Ecto-based tool result caching |
 | `BranchedLLM.LLM.StreamParser` | Stream intent detection and tool call extraction |
 | `BranchedLLM.LLM.StreamResult` | Tagged-union result types (`ContentResult`, `ToolCallResult`, `EmptyResult`) |
-| `BranchedLLM.LLMErrorFormatter` | User-friendly error message formatting |
 
 ### Stream Result Types
 

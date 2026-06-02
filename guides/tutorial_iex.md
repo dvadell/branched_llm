@@ -486,20 +486,15 @@ ContextManager.trim(context,
 
 ## Part 9: Error Handling
 
+Errors are returned as `{:error, message}` tuples:
+
 ```elixir
-alias BranchedLLM.LLMErrorFormatter
-
-# Simulate a rate limit error
-rate_error = %ReqLLM.Error.API.Request{
-  status: 429,
-  reason: "Too many requests",
-  response_body: %{
-    "details" => [%{"@type" => "...", "retryDelay" => "30s"}]
-  }
-}
-
-LLMErrorFormatter.format(rate_error)
-#=> "The AI is busy. Wait a moment and try again later. Please retry in 30s."
+case Chat.send_message("Hello", context) do
+  {:ok, response, new_context} ->
+    IO.puts(response)
+  {:error, message} ->
+    IO.puts("Error: #{message}")
+end
 ```
 
 ---
@@ -545,7 +540,7 @@ IExChat.start()
 | Branching | `BranchedLLM.BranchedChat` | `branch_off/2`, `switch_branch/2` |
 | Messages | `BranchedLLM.Message` | `new/3`, `mark_deleted/1` |
 | Context Window | `BranchedLLM.ContextManager` | `trim/2`, `estimate_tokens/2` |
-| Errors | `BranchedLLM.LLMErrorFormatter` | `format/1` |
+| Errors | `{:error, message}` tuple | pattern match on `{:error, _}` |
 | Caching | `BranchedLLM.ToolCache` | `get_result/2`, `save_result/3` |
 
 ---

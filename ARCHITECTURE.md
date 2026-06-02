@@ -159,7 +159,6 @@ No ordering guarantee between `:llm_metadata` and other events; it is emitted as
 
 | Module | File | Role |
 |--------|------|------|
-| `LLMErrorFormatter` | `lib/branched_llm/llm_error_formatter.ex` | Translates `ReqLLM.Error.API` structs into user-friendly strings (rate limits, server errors, etc.). |
 | `UUID` | `lib/branched_llm/uuid.ex` | Internal UUID generation (Uniq → Ecto → crypto fallback). |
 
 ---
