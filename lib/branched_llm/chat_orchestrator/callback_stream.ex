@@ -9,16 +9,12 @@ defmodule BranchedLLM.ChatOrchestrator.CallbackStream do
 
     case chat_mod.send_message_stream(context, stream_opts) do
       {:ok, %ContentResult{} = result} ->
-        case StreamDispatcher.dispatch(result, for_event(params)) do
-          {:ok, delta} -> handle_content(delta, params)
-          {:error, reason} -> {:error, reason}
-        end
+        {:ok, delta} = StreamDispatcher.dispatch(result, for_event(params))
+        handle_content(delta, params)
 
       {:ok, %ToolCallResult{} = result} ->
-        case StreamDispatcher.dispatch(result, for_event(params)) do
-          {:ok, delta} -> handle_tool_call(delta, params)
-          {:error, reason} -> {:error, reason}
-        end
+        {:ok, delta} = StreamDispatcher.dispatch(result, for_event(params))
+        handle_tool_call(delta, params)
 
       {:ok, %BranchedLLM.LLM.StreamResult.EmptyResult{}} ->
         {:error, "The AI did not return a response. Please try again."}
@@ -27,8 +23,7 @@ defmodule BranchedLLM.ChatOrchestrator.CallbackStream do
         {:error, "Error: #{inspect(reason)}"}
     end
   rescue
-    exception ->
-      {:error, BranchedLLM.LLMErrorFormatter.format(exception)}
+    exception -> {:error, Exception.message(exception)}
   end
 
   defp for_event(params) do
@@ -74,12 +69,8 @@ defmodule BranchedLLM.ChatOrchestrator.CallbackStream do
         ReqLLM.ToolCall.name(tc) == "__structured_output__"
       end)
 
-    if structured_call do
-      args_map = ReqLLM.ToolCall.args_map(structured_call) || %{}
-      params.on_event.({:llm_end, params.branch_id, args_map})
-      :ok
-    else
-      {:error, "Structured output tool call not found"}
-    end
+    args_map = ReqLLM.ToolCall.args_map(structured_call) || %{}
+    params.on_event.({:llm_end, params.branch_id, args_map})
+    :ok
   end
 end

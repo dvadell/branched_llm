@@ -30,7 +30,6 @@ defmodule BranchedLLM.ChatOrchestrator do
   """
 
   alias BranchedLLM.ChatOrchestrator.{CallbackStream, SchemaStream}
-  alias BranchedLLM.LLMErrorFormatter
 
   use Retry
 
@@ -62,9 +61,6 @@ defmodule BranchedLLM.ChatOrchestrator do
       :ok -> :ok
       {:error, reason} -> params.on_event.({:llm_error, params.branch_id, reason})
     end
-  rescue
-    exception ->
-      params.on_event.({:llm_error, params.branch_id, LLMErrorFormatter.format(exception)})
   end
 
   defp do_process(params) do
@@ -86,16 +82,7 @@ defmodule BranchedLLM.ChatOrchestrator do
     end
   rescue
     exception ->
-      params.on_event.({:llm_error, params.branch_id, LLMErrorFormatter.format(exception)})
-  end
-
-  def build_stream_opts(%{schema: schema} = params) when not is_nil(schema) do
-    provider_options = schema_provider_options(schema)
-
-    []
-    |> Keyword.put(:tools, Map.get(params, :llm_tools, []))
-    |> Keyword.put(:schema, schema)
-    |> Keyword.put(:provider_options, provider_options)
+      params.on_event.({:llm_error, params.branch_id, Exception.message(exception)})
   end
 
   def build_stream_opts(params) do
@@ -105,22 +92,17 @@ defmodule BranchedLLM.ChatOrchestrator do
   @doc false
   @spec schema_provider_options(map()) :: keyword()
   def schema_provider_options(schema) do
-    case ReqLLM.Schema.compile(schema) do
-      {:ok, compiled} ->
-        json_schema = ReqLLM.Schema.to_json(compiled.schema)
+    {:ok, compiled} = ReqLLM.Schema.compile(schema)
+    json_schema = ReqLLM.Schema.to_json(compiled.schema)
 
-        response_format = %{
-          type: "json_schema",
-          json_schema: %{
-            name: "structured_output",
-            schema: json_schema
-          }
-        }
+    response_format = %{
+      type: "json_schema",
+      json_schema: %{
+        name: "structured_output",
+        schema: json_schema
+      }
+    }
 
-        [response_format: response_format]
-
-      {:error, _} ->
-        []
-    end
+    [response_format: response_format]
   end
 end

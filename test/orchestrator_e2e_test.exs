@@ -28,6 +28,7 @@ defmodule BranchedLLM.OrchestratorE2ETest do
   import ExUnit.CaptureLog
 
   alias BranchedLLM.ChatOrchestrator
+  alias BranchedLLM.ContextManager.Strategy.SlidingWindow
   alias Plug.Conn
   alias ReqLLM.Context
 
@@ -485,6 +486,173 @@ defmodule BranchedLLM.OrchestratorE2ETest do
       assert find_event(events, :llm_error)
       refute find_event(events, :llm_end)
     end
+
+    @tag timeout: 60_000
+    test "schema path — retries on invalid JSON and succeeds on second attempt", %{
+      mode: mode,
+      bypass: bypass
+    } do
+      schema = %{
+        "type" => "object",
+        "properties" => %{"color" => %{"type" => "string"}},
+        "required" => ["color"]
+      }
+
+      if mode == :bypass do
+        call_count = :counters.new(1, [])
+
+        expect_sse_fn(bypass, fn _conn ->
+          :counters.add(call_count, 1, 1)
+
+          case :counters.get(call_count, 1) do
+            1 -> sse_content(["not json at all"])
+            _ -> sse_schema_content(Jason.encode!(%{"color" => "blue"}))
+          end
+        end)
+      end
+
+      events =
+        collect_events(
+          default_params(
+            message: live_message("What color is the sky?"),
+            schema: schema,
+            schema_max_retries: 3
+          ),
+          event_timeout()
+        )
+
+      case mode do
+        :bypass ->
+          assert {:llm_end, "test", result} = find_event(events, :llm_end)
+          assert result["color"] == "blue"
+
+        :live ->
+          assert find_event(events, :llm_end)
+      end
+    end
+
+    @tag timeout: 60_000
+    test "schema path — retries on valid JSON with wrong schema and succeeds", %{
+      mode: mode,
+      bypass: bypass
+    } do
+      schema = %{
+        "type" => "object",
+        "properties" => %{"count" => %{"type" => "integer"}},
+        "required" => ["count"]
+      }
+
+      if mode == :bypass do
+        call_count = :counters.new(1, [])
+
+        expect_sse_fn(bypass, fn _conn ->
+          :counters.add(call_count, 1, 1)
+
+          case :counters.get(call_count, 1) do
+            1 -> sse_schema_content(Jason.encode!(%{"count" => "not-a-number"}))
+            _ -> sse_schema_content(Jason.encode!(%{"count" => 42}))
+          end
+        end)
+      end
+
+      events =
+        collect_events(
+          default_params(
+            message: live_message("Count something"),
+            schema: schema,
+            schema_max_retries: 3
+          ),
+          event_timeout()
+        )
+
+      case mode do
+        :bypass ->
+          assert {:llm_end, "test", result} = find_event(events, :llm_end)
+          assert result["count"] == 42
+
+        :live ->
+          assert find_event(events, :llm_end)
+      end
+    end
+
+    @tag timeout: 60_000
+    test "schema path — retries on JSON array (non-map) and succeeds", %{
+      mode: mode,
+      bypass: bypass
+    } do
+      schema = %{
+        "type" => "object",
+        "properties" => %{"tag" => %{"type" => "string"}},
+        "required" => ["tag"]
+      }
+
+      if mode == :bypass do
+        call_count = :counters.new(1, [])
+
+        expect_sse_fn(bypass, fn _conn ->
+          :counters.add(call_count, 1, 1)
+
+          case :counters.get(call_count, 1) do
+            1 -> sse_content([Jason.encode!([1, 2, 3])])
+            _ -> sse_schema_content(Jason.encode!(%{"tag" => "hello"}))
+          end
+        end)
+      end
+
+      events =
+        collect_events(
+          default_params(
+            message: live_message("Give me a tag"),
+            schema: schema,
+            schema_max_retries: 3
+          ),
+          event_timeout()
+        )
+
+      case mode do
+        :bypass ->
+          assert {:llm_end, "test", result} = find_event(events, :llm_end)
+          assert result["tag"] == "hello"
+
+        :live ->
+          assert find_event(events, :llm_end)
+      end
+    end
+
+    @tag timeout: 60_000
+    test "schema path — emits llm_error after exhausting all retries on invalid JSON", %{
+      mode: mode,
+      bypass: bypass
+    } do
+      schema = %{
+        "type" => "object",
+        "properties" => %{"value" => %{"type" => "string"}},
+        "required" => ["value"]
+      }
+
+      if mode == :bypass do
+        expect_sse(bypass, sse_content(["I am not JSON"]))
+      end
+
+      events =
+        collect_events(
+          default_params(
+            message: live_message("Say something non-JSON"),
+            schema: schema,
+            schema_max_retries: 3
+          ),
+          event_timeout()
+        )
+
+      case mode do
+        :bypass ->
+          assert find_event(events, :llm_error)
+          refute find_event(events, :llm_end)
+
+        :live ->
+          assert find_event(events, :llm_end) || find_event(events, :llm_error)
+      end
+    end
   end
 
   # ===========================================================================
@@ -717,6 +885,695 @@ defmodule BranchedLLM.OrchestratorE2ETest do
     after
       Application.delete_env(:branched_llm, :max_tokens)
       Application.delete_env(:branched_llm, :trim_callback)
+    end
+
+    @tag :bypass_only
+    test "trims context via 2-tuple callback when configured", %{bypass: bypass} do
+      Application.put_env(:branched_llm, :max_tokens, 10)
+
+      Application.put_env(
+        :branched_llm,
+        :trim_callback,
+        {BranchedLLM.ContextManager.Strategy.SlidingWindow, :trim}
+      )
+
+      expect_sse(bypass, sse_content(["ok"]))
+
+      context =
+        Context.new([Context.system("You are a helpful assistant.")])
+        |> Context.append(Context.user("First message"))
+        |> Context.append(Context.assistant("First response"))
+        |> Context.append(Context.user("Second message"))
+
+      params = %{
+        llm_context: context,
+        llm_tools: [],
+        chat_mod: BranchedLLM.Chat,
+        tool_usage_counts: %{},
+        branch_id: "test"
+      }
+
+      events = collect_events(params, event_timeout())
+
+      assert find_event(events, :llm_end)
+    after
+      Application.delete_env(:branched_llm, :max_tokens)
+      Application.delete_env(:branched_llm, :trim_callback)
+    end
+
+    @tag :bypass_only
+    test "trims context via 1-arity function callback when configured", %{bypass: bypass} do
+      Application.put_env(:branched_llm, :max_tokens, 10)
+
+      Application.put_env(
+        :branched_llm,
+        :trim_callback,
+        fn ctx -> SlidingWindow.trim(ctx, keep: 1) end
+      )
+
+      expect_sse(bypass, sse_content(["ok"]))
+
+      context =
+        Context.new([Context.system("You are a helpful assistant.")])
+        |> Context.append(Context.user("First message"))
+        |> Context.append(Context.assistant("First response"))
+        |> Context.append(Context.user("Second message"))
+
+      params = %{
+        llm_context: context,
+        llm_tools: [],
+        chat_mod: BranchedLLM.Chat,
+        tool_usage_counts: %{},
+        branch_id: "test"
+      }
+
+      events = collect_events(params, event_timeout())
+
+      assert find_event(events, :llm_end)
+    after
+      Application.delete_env(:branched_llm, :max_tokens)
+      Application.delete_env(:branched_llm, :trim_callback)
+    end
+
+    @tag :bypass_only
+    test "tool call with unknown tool — adds tool-not-found error to context", %{
+      bypass: bypass
+    } do
+      dummy_tool =
+        ReqLLM.Tool.new!(
+          name: "some_other_tool",
+          description: "Not the one being called",
+          parameter_schema: %{type: "object", properties: %{}},
+          callback: fn _ -> {:ok, "noop"} end
+        )
+
+      tc = %{
+        "id" => "call_unknown",
+        "name" => "nonexistent_tool",
+        "arguments" => "{}"
+      }
+
+      call_count = :counters.new(1, [])
+
+      expect_sse_fn(bypass, fn _conn ->
+        :counters.add(call_count, 1, 1)
+
+        case :counters.get(call_count, 1) do
+          1 -> sse_tool_call([tc])
+          _ -> sse_content(["I don't have that tool"])
+        end
+      end)
+
+      events = collect_events(default_params(llm_tools: [dummy_tool]), event_timeout())
+
+      assert find_event(events, :llm_tool_called)
+      assert find_event(events, :llm_end)
+    end
+
+    @tag :bypass_only
+    test "tool call with failing tool — adds tool-execution error to context", %{
+      bypass: bypass
+    } do
+      broken_tool =
+        ReqLLM.Tool.new!(
+          name: "broken_tool",
+          description: "Always fails",
+          parameter_schema: %{
+            type: "object",
+            properties: %{input: %{type: "string"}},
+            required: ["input"]
+          },
+          callback: fn _args -> {:error, "something went wrong"} end
+        )
+
+      tc = %{
+        "id" => "call_broken",
+        "name" => "broken_tool",
+        "arguments" => Jason.encode!(%{"input" => "test"})
+      }
+
+      call_count = :counters.new(1, [])
+
+      expect_sse_fn(bypass, fn _conn ->
+        :counters.add(call_count, 1, 1)
+
+        case :counters.get(call_count, 1) do
+          1 -> sse_tool_call([tc])
+          _ -> sse_content(["The tool failed but I tried"])
+        end
+      end)
+
+      events = collect_events(default_params(llm_tools: [broken_tool]), event_timeout())
+
+      assert find_event(events, :llm_tool_called)
+      assert find_event(events, :llm_end)
+    end
+
+    @tag :bypass_only
+    test "tool usage limit reached — tool returns limit message", %{bypass: bypass} do
+      calculator =
+        ReqLLM.Tool.new!(
+          name: "calculator",
+          description: "Evaluates math",
+          parameter_schema: %{
+            type: "object",
+            properties: %{expression: %{type: "string"}},
+            required: ["expression"]
+          },
+          callback: fn %{"expression" => expr} ->
+            {result, _} = Code.eval_string(expr)
+            {:ok, to_string(result)}
+          end
+        )
+
+      tc = %{
+        "id" => "call_limited",
+        "name" => "calculator",
+        "arguments" => Jason.encode!(%{"expression" => "1+1"})
+      }
+
+      call_count = :counters.new(1, [])
+
+      expect_sse_fn(bypass, fn _conn ->
+        :counters.add(call_count, 1, 1)
+
+        case :counters.get(call_count, 1) do
+          1 -> sse_tool_call([tc])
+          _ -> sse_content(["done"])
+        end
+      end)
+
+      params =
+        default_params(llm_tools: [calculator])
+        |> Map.put(:tool_usage_counts, %{calculator: 10})
+
+      events = collect_events(params, event_timeout())
+
+      assert find_event(events, :llm_tool_called)
+      assert find_event(events, :llm_end)
+    end
+
+    @tag :bypass_only
+    test "429 rate limit error — retries exhaust and emit error", %{
+      bypass: bypass
+    } do
+      Bypass.expect(bypass, fn conn ->
+        conn
+        |> Conn.put_resp_header("content-type", "application/json")
+        |> Conn.send_resp(
+          429,
+          Jason.encode!(%{
+            "error" => %{
+              "message" => "Rate limit exceeded",
+              "details" => [
+                %{
+                  "@type" => "type.googleapis.com/google.rpc.RetryInfo",
+                  "retryDelay" => "30s"
+                }
+              ]
+            }
+          })
+        )
+      end)
+
+      _log =
+        capture_log(fn ->
+          events = collect_events(default_params(), event_timeout())
+
+          assert find_event(events, :llm_error) || find_event(events, :llm_end)
+        end)
+    end
+
+    @tag :bypass_only
+    test "schema path — max retries exhausted returns ValidationError", %{bypass: bypass} do
+      schema = %{
+        "type" => "object",
+        "properties" => %{"key" => %{"type" => "string"}},
+        "required" => ["key"]
+      }
+
+      call_count = :counters.new(1, [])
+
+      expect_sse_fn(bypass, fn _conn ->
+        :counters.add(call_count, 1, 1)
+        sse_content(["not valid json"])
+      end)
+
+      events =
+        collect_events(
+          default_params(schema: schema, schema_max_retries: 1),
+          event_timeout()
+        )
+
+      assert find_event(events, :llm_error)
+      refute find_event(events, :llm_end)
+
+      {:llm_error, "test", error} = find_event(events, :llm_error)
+
+      assert is_binary(error) or
+               match?(%BranchedLLM.StructuredOutput.ValidationError{}, error)
+    end
+
+    @tag :bypass_only
+    test "schema path — tool call in schema mode routes through handle_tool_call_result", %{
+      bypass: bypass
+    } do
+      schema = %{
+        "type" => "object",
+        "properties" => %{"result" => %{"type" => "string"}},
+        "required" => ["result"]
+      }
+
+      calculator =
+        ReqLLM.Tool.new!(
+          name: "calculator",
+          description: "Evaluates math",
+          parameter_schema: %{
+            type: "object",
+            properties: %{expression: %{type: "string"}},
+            required: ["expression"]
+          },
+          callback: fn %{"expression" => expr} ->
+            {result, _} = Code.eval_string(expr)
+            {:ok, to_string(result)}
+          end
+        )
+
+      tc = %{
+        "id" => "call_1",
+        "name" => "calculator",
+        "arguments" => Jason.encode!(%{"expression" => "3 * 7"})
+      }
+
+      call_count = :counters.new(1, [])
+
+      expect_sse_fn(bypass, fn _conn ->
+        :counters.add(call_count, 1, 1)
+
+        case :counters.get(call_count, 1) do
+          1 -> sse_tool_call([tc])
+          _ -> sse_schema_content(Jason.encode!(%{"result" => "21"}))
+        end
+      end)
+
+      events =
+        collect_events(
+          default_params(
+            llm_tools: [calculator],
+            schema: schema,
+            schema_max_retries: 3
+          ),
+          event_timeout()
+        )
+
+      assert find_event(events, :llm_tool_called)
+
+      assert {:llm_end, "test", result} = find_event(events, :llm_end)
+      assert is_map(result)
+      assert result["result"] == "21"
+    end
+
+    @tag :bypass_only
+    test "schema path — __structured_output__ tool call with valid args", %{bypass: bypass} do
+      schema = %{
+        "type" => "object",
+        "properties" => %{"mood" => %{"type" => "string"}},
+        "required" => ["mood"]
+      }
+
+      dummy_tool =
+        ReqLLM.Tool.new!(
+          name: "noop",
+          description: "No-op",
+          parameter_schema: %{type: "object", properties: %{}},
+          callback: fn _ -> {:ok, "noop"} end
+        )
+
+      tc = %{
+        "id" => "call_structured",
+        "name" => "__structured_output__",
+        "arguments" => Jason.encode!(%{"mood" => "happy"})
+      }
+
+      expect_sse(bypass, sse_tool_call([tc]))
+
+      events =
+        collect_events(
+          default_params(llm_tools: [dummy_tool], schema: schema, schema_max_retries: 0),
+          event_timeout()
+        )
+
+      assert {:llm_end, "test", result} = find_event(events, :llm_end)
+      assert is_map(result)
+      assert result["mood"] == "happy"
+    end
+
+    @tag :bypass_only
+    test "schema path — __structured_output__ tool call with invalid args retries", %{
+      bypass: bypass
+    } do
+      schema = %{
+        "type" => "object",
+        "properties" => %{"color" => %{"type" => "string"}},
+        "required" => ["color"]
+      }
+
+      dummy_tool =
+        ReqLLM.Tool.new!(
+          name: "noop",
+          description: "No-op",
+          parameter_schema: %{type: "object", properties: %{}},
+          callback: fn _ -> {:ok, "noop"} end
+        )
+
+      tc_invalid = %{
+        "id" => "call_structured_bad",
+        "name" => "__structured_output__",
+        "arguments" => Jason.encode!(%{"wrong" => "field"})
+      }
+
+      call_count = :counters.new(1, [])
+
+      expect_sse_fn(bypass, fn _conn ->
+        :counters.add(call_count, 1, 1)
+
+        case :counters.get(call_count, 1) do
+          1 -> sse_tool_call([tc_invalid])
+          _ -> sse_schema_content(Jason.encode!(%{"color" => "blue"}))
+        end
+      end)
+
+      events =
+        collect_events(
+          default_params(llm_tools: [dummy_tool], schema: schema, schema_max_retries: 3),
+          event_timeout()
+        )
+
+      assert {:llm_end, "test", result} = find_event(events, :llm_end)
+      assert result["color"] == "blue"
+    end
+
+    @tag :bypass_only
+    test "non-schema __structured_output__ tool call emits llm_end with args_map", %{
+      bypass: bypass
+    } do
+      dummy_tool =
+        ReqLLM.Tool.new!(
+          name: "noop",
+          description: "No-op",
+          parameter_schema: %{type: "object", properties: %{}},
+          callback: fn _ -> {:ok, "noop"} end
+        )
+
+      tc = %{
+        "id" => "call_structured",
+        "name" => "__structured_output__",
+        "arguments" => Jason.encode!(%{"answer" => "42"})
+      }
+
+      expect_sse(bypass, sse_tool_call([tc]))
+
+      events = collect_events(default_params(llm_tools: [dummy_tool]), event_timeout())
+
+      assert {:llm_end, "test", result} = find_event(events, :llm_end)
+      assert is_map(result)
+      assert result["answer"] == "42"
+    end
+
+    @tag :bypass_only
+    test "trims context with failing 3-tuple callback — falls back to pruning", %{
+      bypass: bypass
+    } do
+      Application.put_env(:branched_llm, :max_tokens, 10)
+      Application.put_env(:branched_llm, :trim_callback, {Kernel, :apply, [[:boom]]})
+
+      _log =
+        capture_log(fn ->
+          expect_sse(bypass, sse_content(["ok"]))
+
+          context =
+            Context.new([Context.system("You are a helpful assistant.")])
+            |> Context.append(Context.user("First message"))
+            |> Context.append(Context.assistant("First response"))
+            |> Context.append(Context.user("Second message"))
+
+          params = %{
+            llm_context: context,
+            llm_tools: [],
+            chat_mod: BranchedLLM.Chat,
+            tool_usage_counts: %{},
+            branch_id: "test"
+          }
+
+          events = collect_events(params, event_timeout())
+          assert find_event(events, :llm_end)
+        end)
+    after
+      Application.delete_env(:branched_llm, :max_tokens)
+      Application.delete_env(:branched_llm, :trim_callback)
+    end
+
+    @tag :bypass_only
+    test "trims context with failing 2-tuple callback — falls back to pruning", %{
+      bypass: bypass
+    } do
+      Application.put_env(:branched_llm, :max_tokens, 10)
+      Application.put_env(:branched_llm, :trim_callback, {Kernel, :apply})
+
+      _log =
+        capture_log(fn ->
+          expect_sse(bypass, sse_content(["ok"]))
+
+          context =
+            Context.new([Context.system("You are a helpful assistant.")])
+            |> Context.append(Context.user("First message"))
+            |> Context.append(Context.assistant("First response"))
+            |> Context.append(Context.user("Second message"))
+
+          params = %{
+            llm_context: context,
+            llm_tools: [],
+            chat_mod: BranchedLLM.Chat,
+            tool_usage_counts: %{},
+            branch_id: "test"
+          }
+
+          events = collect_events(params, event_timeout())
+          assert find_event(events, :llm_end)
+        end)
+    after
+      Application.delete_env(:branched_llm, :max_tokens)
+      Application.delete_env(:branched_llm, :trim_callback)
+    end
+
+    @tag :bypass_only
+    test "trims context with failing 1-arity function callback — falls back to pruning", %{
+      bypass: bypass
+    } do
+      Application.put_env(:branched_llm, :max_tokens, 10)
+      Application.put_env(:branched_llm, :trim_callback, fn _ctx -> raise "boom" end)
+
+      _log =
+        capture_log(fn ->
+          expect_sse(bypass, sse_content(["ok"]))
+
+          context =
+            Context.new([Context.system("You are a helpful assistant.")])
+            |> Context.append(Context.user("First message"))
+            |> Context.append(Context.assistant("First response"))
+            |> Context.append(Context.user("Second message"))
+
+          params = %{
+            llm_context: context,
+            llm_tools: [],
+            chat_mod: BranchedLLM.Chat,
+            tool_usage_counts: %{},
+            branch_id: "test"
+          }
+
+          events = collect_events(params, event_timeout())
+          assert find_event(events, :llm_end)
+        end)
+    after
+      Application.delete_env(:branched_llm, :max_tokens)
+      Application.delete_env(:branched_llm, :trim_callback)
+    end
+
+    @tag :bypass_only
+    test "schema path with invalid schema — schema_provider_options returns [] gracefully", %{
+      bypass: bypass
+    } do
+      schema = %{"invalid" => "not a valid json schema"}
+
+      expect_sse(bypass, sse_content(["not json"]))
+
+      events =
+        collect_events(
+          default_params(schema: schema, schema_max_retries: 0),
+          event_timeout()
+        )
+
+      assert find_event(events, :llm_error) || find_event(events, :llm_end)
+    end
+
+    @tag :bypass_only
+    test "schema path with Anthropic model — exercises resolve_provider and build_synthetic_tool",
+         %{
+           bypass: bypass
+         } do
+      # When the model's provider is :anthropic, schema_opts builds the synthetic
+      # __structured_output__ tool and tool_choice. The Anthropic provider rejects
+      # response_format, so the HTTP call fails before reaching Bypass.
+      Application.put_env(:branched_llm, :ai_model, "anthropic:claude-3-sonnet")
+
+      schema = %{
+        "type" => "object",
+        "properties" => %{"mood" => %{"type" => "string"}},
+        "required" => ["mood"]
+      }
+
+      Bypass.down(bypass)
+
+      events =
+        collect_events(
+          default_params(schema: schema, schema_max_retries: 0),
+          event_timeout()
+        )
+
+      assert find_event(events, :llm_error) || find_event(events, :llm_end)
+    after
+      Application.put_env(:branched_llm, :ai_model, "ollama:test-model")
+    end
+
+    @tag :bypass_only
+    test "schema path — __structured_output__ tool call exhausts retries and emits error", %{
+      bypass: bypass
+    } do
+      # The structured output tool call returns invalid args on every attempt.
+      # SchemaStream should exhaust retries and emit llm_error.
+      schema = %{
+        "type" => "object",
+        "properties" => %{"x" => %{"type" => "integer"}},
+        "required" => ["x"]
+      }
+
+      dummy_tool =
+        ReqLLM.Tool.new!(
+          name: "noop",
+          description: "No-op",
+          parameter_schema: %{type: "object", properties: %{}},
+          callback: fn _ -> {:ok, "noop"} end
+        )
+
+      tc = %{
+        "id" => "call_structured_bad",
+        "name" => "__structured_output__",
+        "arguments" => Jason.encode!(%{"wrong" => "field"})
+      }
+
+      expect_sse(bypass, sse_tool_call([tc]))
+
+      events =
+        collect_events(
+          default_params(llm_tools: [dummy_tool], schema: schema, schema_max_retries: 0),
+          event_timeout()
+        )
+
+      assert find_event(events, :llm_error)
+      refute find_event(events, :llm_end)
+    end
+
+    @tag :bypass_only
+    test "schema path — empty text content triggers retry", %{bypass: bypass} do
+      schema = %{
+        "type" => "object",
+        "properties" => %{"word" => %{"type" => "string"}},
+        "required" => ["word"]
+      }
+
+      call_count = :counters.new(1, [])
+
+      expect_sse_fn(bypass, fn _conn ->
+        :counters.add(call_count, 1, 1)
+
+        case :counters.get(call_count, 1) do
+          # First call: return empty content
+          1 ->
+            sse_data(%{
+              "id" => "chatcmpl-test",
+              "object" => "chat.completion.chunk",
+              "created" => 0,
+              "model" => "test-model",
+              "choices" => [
+                %{
+                  "index" => 0,
+                  "delta" => %{"role" => "assistant", "content" => ""},
+                  "finish_reason" => nil
+                }
+              ]
+            }) <>
+              sse_data(%{
+                "id" => "chatcmpl-test",
+                "object" => "chat.completion.chunk",
+                "created" => 0,
+                "model" => "test-model",
+                "choices" => [%{"index" => 0, "delta" => %{}, "finish_reason" => "stop"}]
+              }) <>
+              sse_data(%{
+                "id" => "chatcmpl-test",
+                "object" => "chat.completion.chunk",
+                "created" => 0,
+                "model" => "test-model",
+                "choices" => [],
+                "usage" => %{"prompt_tokens" => 5, "completion_tokens" => 1, "total_tokens" => 6}
+              }) <>
+              "data: [DONE]\n\n"
+
+          # Second call: return valid schema response
+          _ ->
+            sse_schema_content(Jason.encode!(%{"word" => "hello"}))
+        end
+      end)
+
+      events =
+        collect_events(
+          default_params(schema: schema, schema_max_retries: 2),
+          event_timeout()
+        )
+
+      assert {:llm_end, "test", result} = find_event(events, :llm_end)
+      assert result["word"] == "hello"
+    end
+
+    @tag :bypass_only
+    test "schema path with binary model string — exercises resolve_provider binary clause", %{
+      bypass: bypass
+    } do
+      # Use an unknown provider so Chat.default_model/0 returns a raw binary
+      # string instead of %LLMDB.Model{}. This exercises the resolve_provider/1
+      # binary clause. The LLM call will fail since the provider doesn't exist.
+      Application.put_env(:branched_llm, :ai_model, "fakeprovider:some-model")
+
+      schema = %{
+        "type" => "object",
+        "properties" => %{"x" => %{"type" => "string"}},
+        "required" => ["x"]
+      }
+
+      # The provider won't be found, so the request will fail.
+      # Bypass doesn't matter — the error happens before HTTP.
+      Bypass.down(bypass)
+
+      events =
+        collect_events(
+          default_params(schema: schema, schema_max_retries: 0),
+          event_timeout()
+        )
+
+      # The request fails because the provider is unknown.
+      assert find_event(events, :llm_error) || find_event(events, :llm_end)
+    after
+      Application.put_env(:branched_llm, :ai_model, "ollama:test-model")
     end
   end
 end

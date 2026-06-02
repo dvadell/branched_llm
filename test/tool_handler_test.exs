@@ -41,43 +41,12 @@ defmodule BranchedLLM.ToolHandlerTest do
 
       assert %Context{} = result
     end
-
-    test "handles tool not found gracefully" do
-      tool_call = make_tool_call("call_456", "nonexistent_tool", %{})
-      context = Context.new([])
-
-      result = ToolHandler.handle_tool_calls([tool_call], context, [], MockChatModule)
-
-      assert %Context{} = result
-    end
   end
 
   describe "process_tool_call/4" do
     test "executes a tool successfully and appends result to context" do
       tool = %MockTool{name: "calculator"}
       tool_call = make_tool_call("call_789", "calculator", %{"a" => 5, "b" => 3})
-      context = Context.new([])
-
-      {result, _log} =
-        with_log(fn ->
-          ToolHandler.process_tool_call(tool_call, [tool], context, MockChatModule)
-        end)
-
-      assert %Context{} = result
-    end
-
-    test "returns error message when tool is not found" do
-      tool_call = make_tool_call("call_abc", "missing_tool", %{})
-      context = Context.new([])
-
-      result = ToolHandler.process_tool_call(tool_call, [], context, MockChatModule)
-
-      assert %Context{} = result
-    end
-
-    test "handles tool execution error" do
-      tool = %MockTool{name: "failing_tool"}
-      tool_call = make_tool_call("call_err", "failing_tool", %{})
       context = Context.new([])
 
       {result, _log} =

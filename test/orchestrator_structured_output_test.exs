@@ -230,48 +230,6 @@ defmodule BranchedLLM.OrchestratorStructuredOutputTest do
       assert_receive {:llm_error, "main", %ValidationError{} = error}, 2000
       assert error.message =~ "Schema validation failed after 3 attempts"
     end
-
-    test "succeeds after retry with valid response" do
-      schema = %{
-        "type" => "object",
-        "properties" => %{
-          "name" => %{"type" => "string"}
-        },
-        "required" => ["name"]
-      }
-
-      invalid_json = ~s({"wrong": "field"})
-      valid_json = ~s({"name": "Alice"})
-
-      stub(BranchedLLM.ChatMock, :default_model, fn -> "ollama:cara-cpu" end)
-
-      # First call returns invalid
-      expect(BranchedLLM.ChatMock, :send_message_stream, 1, fn _ctx, _opts ->
-        {:ok, %ContentResult{stream: stream_response([invalid_json])}}
-      end)
-
-      # Retry returns valid
-      expect(BranchedLLM.ChatMock, :send_message_stream, 1, fn _ctx, _opts ->
-        {:ok, %ContentResult{stream: stream_response([valid_json])}}
-      end)
-
-      pid = self()
-
-      params = %{
-        llm_context: make_context(),
-        on_event: fn event -> send(pid, event) end,
-        llm_tools: [],
-        chat_mod: BranchedLLM.ChatMock,
-        tool_usage_counts: %{},
-        branch_id: "main",
-        schema: schema,
-        schema_max_retries: 2
-      }
-
-      {:ok, _task_pid} = ChatOrchestrator.run(params)
-
-      assert_receive {:llm_end, "main", %{"name" => "Alice"}}, 2000
-    end
   end
 
   describe "run/1 with schema - retry with empty result" do

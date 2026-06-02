@@ -13,56 +13,40 @@ defmodule BranchedLLM.ChatOrchestrator.SchemaStream do
     do_run(params, 1, max_attempts)
   end
 
-  defp do_run(_params, attempt, max_attempts) when attempt > max_attempts do
-    {:error,
-     %ValidationError{
-       message: "Schema validation failed after #{max_attempts} attempts",
-       last_response: nil,
-       validation_errors: []
-     }}
-  end
-
   defp do_run(params, attempt, max_attempts) do
     %{llm_context: context, chat_mod: chat_mod} = params
 
     case chat_mod.send_message_stream(context, schema_opts(params)) do
       {:ok, %ContentResult{} = result} ->
-        case StreamDispatcher.dispatch(result, for_event(params)) do
-          {:ok, delta} -> handle_content_result(delta, params, attempt, max_attempts)
-          {:error, reason} -> retry_or_fail(params, attempt, max_attempts, reason)
-        end
+        {:ok, delta} = StreamDispatcher.dispatch(result, for_event(params))
+        handle_content_result(delta, params, attempt, max_attempts)
 
       {:ok, %ToolCallResult{} = result} ->
-        case StreamDispatcher.dispatch(result, for_event(params)) do
-          {:ok, delta} ->
-            handle_tool_call_result(delta, result, params, attempt, max_attempts)
-
-          {:error, reason} ->
-            retry_or_fail(params, attempt, max_attempts, reason)
-        end
+        {:ok, delta} = StreamDispatcher.dispatch(result, for_event(params))
+        handle_tool_call_result(delta, result, params, attempt, max_attempts)
 
       {:ok, %EmptyResult{}} ->
-        retry_or_fail(
-          params,
-          attempt,
-          max_attempts,
-          "The AI did not return a response. Please try again."
-        )
+        retry_on_empty(params, attempt, max_attempts)
 
       {:error, reason} ->
-        retry_or_fail(params, attempt, max_attempts, reason)
+        retry_on_error(params, attempt, max_attempts, reason)
     end
-  rescue
-    exception ->
-      {:error, BranchedLLM.LLMErrorFormatter.format(exception)}
   end
 
-  defp retry_or_fail(params, attempt, max_attempts, _reason) when attempt < max_attempts do
-    do_run(params, attempt + 1, max_attempts)
+  defp retry_on_empty(params, attempt, max_attempts) do
+    if attempt < max_attempts do
+      do_run(params, attempt + 1, max_attempts)
+    else
+      {:error, "The AI did not return a response. Please try again."}
+    end
   end
 
-  defp retry_or_fail(_params, _attempt, _max_attempts, reason) do
-    {:error, reason}
+  defp retry_on_error(params, attempt, max_attempts, _reason) do
+    if attempt < max_attempts do
+      do_run(params, attempt + 1, max_attempts)
+    else
+      {:error, "The AI did not return a response. Please try again."}
+    end
   end
 
   # ContentResult with empty stream produces full_text == ""
@@ -72,12 +56,7 @@ defmodule BranchedLLM.ChatOrchestrator.SchemaStream do
          attempt,
          max_attempts
        ) do
-    retry_or_fail(
-      params,
-      attempt,
-      max_attempts,
-      "The AI did not return a response. Please try again."
-    )
+    retry_on_empty(params, attempt, max_attempts)
   end
 
   defp handle_content_result(
@@ -139,16 +118,12 @@ defmodule BranchedLLM.ChatOrchestrator.SchemaStream do
         ReqLLM.ToolCall.name(tc) == "__structured_output__"
       end)
 
-    if is_nil(structured_call) do
-      {:error, "Structured output tool call not found"}
-    else
-      validate_and_emit_structured_call(structured_call, params, context, attempt, max_attempts)
-    end
+    validate_and_emit_structured_call(structured_call, params, context, attempt, max_attempts)
   end
 
   defp validate_and_emit_structured_call(call, params, context, attempt, max_attempts) do
     args_map = ReqLLM.ToolCall.args_map(call) || %{}
-    schema = Map.get(params, :schema)
+    schema = Map.fetch!(params, :schema)
 
     case validate_structured_output(args_map, schema) do
       :ok ->
@@ -168,8 +143,6 @@ defmodule BranchedLLM.ChatOrchestrator.SchemaStream do
         end
     end
   end
-
-  defp validate_structured_output(_args_map, nil), do: :ok
 
   defp validate_structured_output(args_map, schema) do
     case ReqLLM.Schema.validate(args_map, schema) do
@@ -246,22 +219,14 @@ defmodule BranchedLLM.ChatOrchestrator.SchemaStream do
   end
 
   defp resolve_provider(%LLMDB.Model{provider: provider}) when is_atom(provider) do
-    case ReqLLM.provider(provider) do
-      {:ok, _} -> provider
-      {:error, _} -> :unknown
-    end
+    provider
   end
 
   defp resolve_provider(model_string) when is_binary(model_string) do
     case String.split(model_string, ":", parts: 2) do
       [provider_str, _model_id] ->
         try do
-          provider = String.to_existing_atom(provider_str)
-
-          case ReqLLM.provider(provider) do
-            {:ok, _} -> provider
-            {:error, _} -> :unknown
-          end
+          String.to_existing_atom(provider_str)
         rescue
           ArgumentError -> :unknown
         end
@@ -270,8 +235,6 @@ defmodule BranchedLLM.ChatOrchestrator.SchemaStream do
         :unknown
     end
   end
-
-  defp resolve_provider(_), do: :unknown
 
   defp build_synthetic_tool(schema) do
     %{
