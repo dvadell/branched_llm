@@ -1575,5 +1575,32 @@ defmodule BranchedLLM.OrchestratorE2ETest do
     after
       Application.put_env(:branched_llm, :ai_model, "ollama:test-model")
     end
+
+    @tag :bypass_only
+    test "schema path with no-colon model string — exercises resolve_provider fallback clause",
+         %{bypass: bypass} do
+      # A model string without a colon hits the `_ -> :unknown` branch
+      # in SchemaStream.resolve_provider/1, treating it as a non-Anthropic provider.
+      Application.put_env(:branched_llm, :ai_model, "nocolonmodel")
+
+      schema = %{
+        "type" => "object",
+        "properties" => %{"x" => %{"type" => "string"}},
+        "required" => ["x"]
+      }
+
+      # The provider won't be found, so the request will fail.
+      Bypass.down(bypass)
+
+      events =
+        collect_events(
+          default_params(schema: schema, schema_max_retries: 0),
+          event_timeout()
+        )
+
+      assert find_event(events, :llm_error) || find_event(events, :llm_end)
+    after
+      Application.put_env(:branched_llm, :ai_model, "ollama:test-model")
+    end
   end
 end

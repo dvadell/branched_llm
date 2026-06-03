@@ -11,5 +11,3 @@ excluded_tags =
   end
 
 ExUnit.start(exclude: excluded_tags)
-
-Mox.defmock(BranchedLLM.ChatMock, for: BranchedLLM.ChatBehaviour)

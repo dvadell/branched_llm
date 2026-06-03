@@ -62,10 +62,6 @@ defmodule BranchedLLM.ChatOrchestrator.StreamDispatcher do
      }}
   end
 
-  def dispatch(_empty, _state) do
-    {:error, "The AI did not return a response. Please try again."}
-  end
-
   defp emit_metadata(
          %{on_event: on_event_fn, branch_id: branch_id},
          _branch_id,
