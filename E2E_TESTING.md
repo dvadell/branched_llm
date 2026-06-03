@@ -4,7 +4,7 @@ End-to-end tests exercise `BranchedLLM.ChatOrchestrator.run/1` as the main
 entrypoint, driving the full HTTP pipeline through ReqLLM — request
 construction, provider options, SSE stream parsing, and event emission.
 
-All e2e tests live in `test/orchestrator_e2e_test.exs`.
+All e2e tests live under `test/e2e`.
 
 ## Two modes, one test suite
 
@@ -24,13 +24,13 @@ The `LLM_TEST_MODE` environment variable selects the backend:
 
 ```bash
 # Bypass mode (default) — no LLM server needed
-mix test test/orchestrator_e2e_test.exs
+mix test test/e2e
 
 # Live mode — requires a running LLM server
 LLM_TEST_MODE=live \
 LLM_BASE_URL=http://localhost:11434/v1 \
 LLM_MODEL=ollama:cara-cpu \
-mix test test/orchestrator_e2e_test.exs
+mix test test/e2e
 ```
 
 Live mode also accepts `--trace` for per-test output (tests are slow, 2–3 s each).

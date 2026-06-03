@@ -29,19 +29,11 @@ defmodule BranchedLLM.ChatOrchestrator.SchemaStream do
         retry_on_empty(params, attempt, max_attempts)
 
       {:error, reason} ->
-        retry_on_error(params, attempt, max_attempts, reason)
+        {:error, reason}
     end
   end
 
   defp retry_on_empty(params, attempt, max_attempts) do
-    if attempt < max_attempts do
-      do_run(params, attempt + 1, max_attempts)
-    else
-      {:error, "The AI did not return a response. Please try again."}
-    end
-  end
-
-  defp retry_on_error(params, attempt, max_attempts, _reason) do
     if attempt < max_attempts do
       do_run(params, attempt + 1, max_attempts)
     else

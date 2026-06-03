@@ -594,5 +594,81 @@ defmodule BranchedLLM.E2E.SchemaTest do
     after
       Application.put_env(:branched_llm, :ai_model, "ollama:test-model")
     end
+
+    @tag :bypass_only
+    test "schema path — EmptyResult from LLM triggers retry and succeeds", %{bypass: bypass} do
+      schema = %{
+        "type" => "object",
+        "properties" => %{"word" => %{"type" => "string"}},
+        "required" => ["word"]
+      }
+
+      call_count = :counters.new(1, [])
+
+      Bypass.expect(bypass, "POST", "/v1/chat/completions", fn conn ->
+        :counters.add(call_count, 1, 1)
+
+        case :counters.get(call_count, 1) do
+          1 ->
+            # Stream with nil content and no tool calls -> EmptyResult
+            empty_stream =
+              sse_data(%{
+                "id" => "chatcmpl-test",
+                "object" => "chat.completion.chunk",
+                "created" => 0,
+                "model" => "test-model",
+                "choices" => [
+                  %{
+                    "index" => 0,
+                    "delta" => %{"role" => "assistant", "content" => nil},
+                    "finish_reason" => nil
+                  }
+                ]
+              }) <>
+                sse_data(%{
+                  "id" => "chatcmpl-test",
+                  "object" => "chat.completion.chunk",
+                  "created" => 0,
+                  "model" => "test-model",
+                  "choices" => [%{"index" => 0, "delta" => %{}, "finish_reason" => "stop"}]
+                }) <>
+                sse_data(%{
+                  "id" => "chatcmpl-test",
+                  "object" => "chat.completion.chunk",
+                  "created" => 0,
+                  "model" => "test-model",
+                  "choices" => [],
+                  "usage" => %{
+                    "prompt_tokens" => 5,
+                    "completion_tokens" => 0,
+                    "total_tokens" => 5
+                  }
+                }) <>
+                "data: [DONE]\n\n"
+
+            conn
+            |> Conn.put_resp_header("content-type", "text/event-stream")
+            |> Conn.put_resp_header("cache-control", "no-cache")
+            |> Conn.send_resp(200, empty_stream)
+
+          _ ->
+            valid_json = Jason.encode!(%{"word" => "hello"})
+
+            conn
+            |> Conn.put_resp_header("content-type", "text/event-stream")
+            |> Conn.put_resp_header("cache-control", "no-cache")
+            |> Conn.send_resp(200, sse_schema_content(valid_json))
+        end
+      end)
+
+      events =
+        collect_events(
+          default_params(schema: schema, schema_max_retries: 3),
+          event_timeout()
+        )
+
+      assert {:llm_end, "test", result} = find_event(events, :llm_end)
+      assert result["word"] == "hello"
+    end
   end
 end

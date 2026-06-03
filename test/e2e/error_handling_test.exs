@@ -99,5 +99,20 @@ defmodule BranchedLLM.E2E.ErrorHandlingTest do
           assert find_event(events, :llm_error) || find_event(events, :llm_end)
         end)
     end
+
+    @tag :bypass_only
+    test "emits llm_error on malformed SSE response", %{bypass: bypass} do
+      Bypass.expect(bypass, "POST", "/v1/chat/completions", fn conn ->
+        conn
+        |> Conn.put_resp_header("content-type", "text/event-stream")
+        |> Conn.send_resp(200, "not valid sse data at all")
+      end)
+
+      _log =
+        capture_log(fn ->
+          events = collect_events(default_params(), event_timeout())
+          assert find_event(events, :llm_end) || find_event(events, :llm_error)
+        end)
+    end
   end
 end
