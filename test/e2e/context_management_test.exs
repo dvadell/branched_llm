@@ -299,5 +299,116 @@ defmodule BranchedLLM.E2E.ContextManagementTest do
       Application.delete_env(:branched_llm, :max_tokens)
       Application.delete_env(:branched_llm, :trim_callback)
     end
+
+    @tag :bypass_only
+    test "Summarize strategy — short conversation returns context unchanged", %{bypass: bypass} do
+      Application.put_env(:branched_llm, :max_tokens, 5)
+
+      Application.put_env(
+        :branched_llm,
+        :trim_callback,
+        {BranchedLLM.ContextManager.Strategy.Summarize, :trim, [recent_count: 4]}
+      )
+
+      expect_sse(bypass, sse_content(["ok"]))
+
+      # Only 2 messages — fewer than recent_count: 4, so old_msgs is []
+      long_system = String.duplicate("abc ", 20)
+
+      context =
+        Context.new([Context.system(long_system)])
+        |> Context.append(Context.user("Short"))
+        |> Context.append(Context.assistant("Reply"))
+
+      params = %{
+        llm_context: context,
+        llm_tools: [],
+        chat_mod: BranchedLLM.Chat,
+        tool_usage_counts: %{},
+        branch_id: "test"
+      }
+
+      events = collect_events(params, event_timeout())
+      assert find_event(events, :llm_end)
+    after
+      Application.delete_env(:branched_llm, :max_tokens)
+      Application.delete_env(:branched_llm, :trim_callback)
+    end
+
+    @tag :bypass_only
+    test "Summarize strategy — long conversation triggers default_summarizer truncation", %{
+      bypass: bypass
+    } do
+      Application.put_env(:branched_llm, :max_tokens, 10)
+
+      Application.put_env(
+        :branched_llm,
+        :trim_callback,
+        {BranchedLLM.ContextManager.Strategy.Summarize, :trim, [recent_count: 1]}
+      )
+
+      expect_sse(bypass, sse_content(["ok"]))
+
+      # Build a conversation where the old messages exceed 500 chars
+      long_text = String.duplicate("abcdefghij", 60)
+
+      context =
+        Context.new([Context.system("You are a helpful assistant.")])
+        |> Context.append(Context.user(long_text))
+        |> Context.append(Context.assistant(long_text))
+        |> Context.append(Context.user("Recent message"))
+        |> Context.append(Context.assistant("Recent reply"))
+
+      params = %{
+        llm_context: context,
+        llm_tools: [],
+        chat_mod: BranchedLLM.Chat,
+        tool_usage_counts: %{},
+        branch_id: "test"
+      }
+
+      events = collect_events(params, event_timeout())
+      assert find_event(events, :llm_end)
+    after
+      Application.delete_env(:branched_llm, :max_tokens)
+      Application.delete_env(:branched_llm, :trim_callback)
+    end
+
+    @tag :bypass_only
+    test "Percentage strategy — short conversation fits entirely within token budget", %{
+      bypass: bypass
+    } do
+      Application.put_env(:branched_llm, :max_tokens, 5)
+
+      Application.put_env(
+        :branched_llm,
+        :trim_callback,
+        {BranchedLLM.ContextManager.Strategy.Percentage, :trim, [retain: 1.0]}
+      )
+
+      expect_sse(bypass, sse_content(["ok"]))
+
+      # Long system prompt exceeds max_tokens so trimming is triggered,
+      # but zero conversation messages means accumulate_until_tokens
+      # is called with [], hitting the empty-list base case.
+      long_system = String.duplicate("abc ", 20)
+
+      context =
+        Context.new([Context.system(long_system)])
+
+      params = %{
+        llm_context: context,
+        llm_tools: [],
+        chat_mod: BranchedLLM.Chat,
+        tool_usage_counts: %{},
+        branch_id: "test"
+      }
+
+      events = collect_events(params, event_timeout())
+      assert find_event(events, :llm_end)
+    after
+      Application.delete_env(:branched_llm, :max_tokens)
+      Application.delete_env(:branched_llm, :trim_callback)
+    end
   end
 end

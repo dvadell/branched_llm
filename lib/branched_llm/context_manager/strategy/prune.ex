@@ -59,15 +59,8 @@ defmodule BranchedLLM.ContextManager.Strategy.Prune do
   defp message_char_length(%Message{content: content_parts}) when is_list(content_parts) do
     Enum.reduce(content_parts, 0, fn
       %{type: :text, text: text}, acc when is_binary(text) -> acc + byte_size(text)
-      _, acc -> acc
     end)
   end
-
-  defp message_char_length(%Message{content: content}) when is_binary(content) do
-    byte_size(content)
-  end
-
-  defp message_char_length(_), do: 0
 
   @spec drop_until_fits([Message.t()], non_neg_integer(), [Message.t()]) :: [Message.t()]
   defp drop_until_fits([], _available_tokens, acc), do: Enum.reverse(acc)

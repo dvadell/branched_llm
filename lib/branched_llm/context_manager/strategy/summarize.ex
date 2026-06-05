@@ -127,16 +127,7 @@ defmodule BranchedLLM.ContextManager.Strategy.Summarize do
 
   defp extract_text(%Message{content: content_parts}) when is_list(content_parts) do
     content_parts
-    |> Enum.filter(fn
-      %{type: :text} -> true
-      _ -> false
-    end)
+    |> Enum.filter(fn %{type: :text} -> true end)
     |> Enum.map_join(fn %{text: text} -> text end)
   end
-
-  defp extract_text(%Message{content: content}) when is_binary(content) do
-    content
-  end
-
-  defp extract_text(_), do: ""
 end

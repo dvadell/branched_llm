@@ -71,8 +71,6 @@ defmodule BranchedLLM.ChatOrchestrator.StreamDispatcher do
     emit_metadata_from_handle(on_event_fn, branch_id, metadata_handle)
   end
 
-  defp emit_metadata(_llm_call_params, _branch_id, nil), do: :ok
-
   defp emit_metadata_from_handle(on_event_fn, branch_id, metadata_handle) do
     metadata = MetadataHandle.await(metadata_handle)
 
