@@ -18,22 +18,23 @@ defmodule BranchedLLM do
   ## Configuration
 
       config :branched_llm,
-        ai_model: "openai:gpt-4",
-        base_url: "http://localhost:11434"
-
+        ai_model: System.get_env("LLM_MODEL") || "ollama:cara-cpu",
+        base_url: System.get_env("LLM_BASE_URL") || "http://localhost:11434"
+   
   """
 
-  alias BranchedLLM.{BranchedChat, ChatOrchestrator, Message}
+  alias BranchedLLM.{BranchedChat, ChatClient, ChatOrchestrator, Message}
+  alias ReqLLM.Context
 
   @doc """
   Creates a new `BranchedChat` with the given chat module, initial messages, and context.
 
-      iex> BranchedLLM.new_chat(BranchedLLM.Chat, [], context)
+      iex> BranchedLLM.new_chat(BranchedLLM.ChatClient, [], context)
       %BranchedLLM.BranchedChat{...}
 
   """
   @spec new_chat(module(), [Message.t()], ReqLLM.Context.t()) :: BranchedChat.t()
-  def new_chat(chat_module, initial_messages, initial_context) do
+  def new_chat(chat_module \\ ChatClient, initial_messages, initial_context) do
     BranchedChat.new(chat_module, initial_messages, initial_context)
   end
 
@@ -50,9 +51,13 @@ defmodule BranchedLLM do
         llm_tools,
         tool_usage_counts
       ) do
+    llm_context =
+      branched_chat
+      |> BranchedChat.get_current_context()
+      |> Context.append(Context.user(message))
+
     params = %{
-      message: message,
-      llm_context: BranchedChat.get_current_context(branched_chat),
+      llm_context: llm_context,
       on_event: on_event,
       llm_tools: llm_tools,
       chat_mod: branched_chat.chat_module,

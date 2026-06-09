@@ -4,9 +4,7 @@ This tutorial walks you through every major feature of BranchedLLM using the Eli
 
 ## Setup
 
-Ensure your `config/config.exs` is set up with your LLM provider details (e.g., Ollama or OpenAI).
-
-Start your app with IEx:
+Ensure your `config/config.exs` is set up with your LLM provider details (e.g., Ollama or OpenAI). Start your app with IEx:
 
 ```bash
 iex -S mix
@@ -16,131 +14,322 @@ All examples below assume you're in the IEx session.
 
 ---
 
-## Part 1: Messages
+## Part 1: Your First Chat
 
-The `Message` struct is the fundamental building block. Every conversation message has a role, content, and unique ID.
+The simplest way to use BranchedLLM is `Chat.send_message/2` — it sends a message and blocks until the full response is ready.
 
 ```elixir
-alias BranchedLLM.Message
+alias BranchedLLM.Chat
 
-# Create a system message
-sys = Message.new(:system, "You are a helpful assistant.")
-#=> %BranchedLLM.Message{role: :system, content: "You are a helpful assistant.", id: "...", metadata: %{}}
+context = Chat.new_context("You are a helpful assistant")
+{:ok, response, new_context} = Chat.send_message("Hello!", context)
+```
 
-# Create a user message
-user = Message.new(:user, "Hello, how are you?")
-#=> %BranchedLLM.Message{role: :user, content: "Hello, how are you?", id: "...", metadata: %{}}
+That's it. `response` is the assistant's reply as a string, and `new_context` contains the updated conversation history (your message + the assistant's reply).
 
-# Create an assistant message
-assistant = Message.new(:assistant, "I'm doing great! How can I help you today?")
+### Continuing the Conversation
 
-# Messages have unique IDs
-user.id
-#=> "a1b2c3d4-..."
+Pass `new_context` back in to keep the thread alive:
 
-# You can provide a custom ID
-custom_msg = Message.new(:user, "Custom ID", id: "my-custom-id")
-custom_msg.id
-#=> "my-custom-id"
+```elixir
+{:ok, response, new_context} = Chat.send_message("What is 2 + 2?", new_context)
+```
 
-# Add metadata (useful for tool calls, annotations, etc.)
-msg_with_meta = Message.new(:assistant, "Response", nil, %{tool_calls: [%{id: "tc1", name: "search"}]})
+The context carries the full history, so the LLM remembers what was said before.
 
-# Mark a message as deleted (soft delete)
-deleted = Message.mark_deleted(user)
-Message.deleted?(deleted)
-#=> true
+### Starting Over
 
-# Convert to/from legacy map format
-map = Message.to_map(user)
-#=> %{sender: :user, content: "Hello, how are you?", id: "...", deleted: false}
-
-restored = Message.from_map(map)
+```elixir
+fresh = Chat.reset_context(new_context)
+# fresh contains only the system prompt — all other messages are gone
 ```
 
 ---
 
-## Part 2: Basic Chat with BranchedChat
+## Part 2: Async with ChatOrchestrator
 
-`BranchedChat` manages a tree of conversation branches. Let's start with a single "main" branch.
+For streaming responses or non-blocking use, `ChatOrchestrator.run/1` spawns a `Task` that streams events back through an `on_event` callback.
 
 ```elixir
-alias BranchedLLM.{BranchedChat, Message, Chat}
+alias BranchedLLM.{Chat, ChatOrchestrator}
 
-# The system prompt lives in the ReqLLM.Context — no need to duplicate
-# it in the messages list (system-role messages are skipped during context rebuild).
-context = Chat.new_context("You are a helpful assistant.")
+context = (
+  "You are a helpful assistant"
+  |> Chat.new_context()
+  |> ReqLLM.Context.append(ReqLLM.Context.user("Tell me a short joke"))
+)
 
-# Create the branched chat with an empty message list
+{:ok, _pid} = ChatOrchestrator.run(%{
+  llm_context: context,
+  on_event: fn
+    {:llm_chunk, _id, chunk} -> IO.write(chunk)
+    {:llm_end, _id, _text}   -> IO.puts("\n[Done]")
+    {:llm_error, _id, err}   -> IO.puts("\n[Error: #{inspect(err)}]")
+    _ -> :ok
+  end,
+  chat_mod: Chat,
+  branch_id: "main"
+})
+```
+
+You'll see the response appear token-by-token in your terminal. The function returns `{:ok, pid}` immediately — all results come through `on_event`.
+
+> **Note:** When using `ChatOrchestrator` directly, you must append the user message to the context yourself (via `ReqLLM.Context.append/2`). `Chat.send_message/2` does this for you.
+
+### Event Reference
+
+| Event | Description |
+|---|---|
+| `{:llm_chunk, branch_id, text}` | Streaming text chunk |
+| `{:llm_end, branch_id, full_text}` | Stream complete |
+| `{:llm_status, branch_id, status}` | Status update (e.g., `"Using calculator..."`) |
+| `{:llm_metadata, branch_id, metadata}` | Token-usage & provider metadata (e.g., `%{usage: %{input_tokens: N, output_tokens: N}}`) |
+| `{:llm_error, branch_id, error}` | Error during the request |
+| `{:update_tool_usage_counts, counts}` | Tool invocation counts (for rate limiting) |
+
+### Capturing Metadata
+
+The `:llm_metadata` event fires as soon as the provider's usage data is available — no ordering guarantee relative to other events. Since `ChatOrchestrator.run/1` runs in a separate `Task`, the `on_event` callback executes in that Task's process — so use `send/2` to pass data back to your IEx process:
+
+```elixir
+caller = self()
+
+{:ok, _pid} = ChatOrchestrator.run(%{
+  llm_context: context,
+  on_event: fn
+    {:llm_metadata, _id, meta} ->
+      send(caller, {:metadata, meta})
+    {:llm_chunk, _id, chunk} ->
+      IO.write(chunk)
+    {:llm_end, _id, _text} ->
+      IO.puts("\n[Done]")
+    _ -> :ok
+  end,
+  chat_mod: Chat,
+  branch_id: "main"
+})
+
+# Collect the metadata when it arrives
+receive do
+  {:metadata, meta} -> IO.inspect(meta, label: "Usage")
+after
+  60_000 -> IO.puts("Timed out")
+end
+#=> Usage: %{usage: %{input_tokens: 85, output_tokens: 61, total_tokens: 146}, ...}
+```
+
+---
+
+## Part 3: Tools
+
+Tools let the LLM call your Elixir code. Pass a list of `ReqLLM.Tool` structs via the `:tools` option.
+
+### With ChatOrchestrator (Recommended)
+
+> **Note:** When using tools, prefer `ChatOrchestrator.run/1` over `Chat.send_message/3`.
+> Tool calls require two sequential LLM round-trips (one to invoke the tool, one for the
+> final answer), which can exceed the synchronous timeout. `ChatOrchestrator` handles
+> this naturally via its async event callback.
+
+```elixir
+calculator = ReqLLM.Tool.new!(
+  name: "calculator",
+  description: "Evaluates a mathematical expression",
+  parameter_schema: %{
+    "type" => "object",
+    "properties" => %{
+      "expression" => %{"type" => "string", "description" => "The expression to evaluate, e.g. '2 + 2'"}
+    },
+    "required" => ["expression"]
+  },
+  callback: fn %{"expression" => expr} ->
+    # SECURITY WARNING: Code.eval_string on LLM output is dangerous.
+    # In production, use a safe math library or restricted parser.
+    try do
+      {result, _} = Code.eval_string(expr)
+      {:ok, to_string(result)}
+    rescue
+      e -> {:error, "Failed: #{Exception.message(e)}"}
+    end
+  end
+)
+
+context = (
+  "You are a helpful math tutor"
+  |> Chat.new_context()
+  |> ReqLLM.Context.append(ReqLLM.Context.user("What is 15 × 37?"))
+)
+
+ChatOrchestrator.run(%{
+  llm_context: context,
+  on_event: fn
+    {:llm_chunk, _, chunk} -> IO.write(chunk)
+    {:llm_status, _, msg} -> IO.puts("\n[#{msg}]")
+    {:llm_end, _, text} -> IO.puts("\n[Done]")
+    {:llm_error, _, err} -> IO.puts("\n[Error: #{inspect(err)}]")
+    _ -> :ok
+  end,
+  llm_tools: [calculator],
+  chat_mod: Chat,
+  branch_id: "main"
+})
+```
+
+You'll see a `[Using calculator...]` status before the final answer streams in.
+
+### With Chat.send_message
+
+```elixir
+weather = ReqLLM.Tool.new!(
+  name: "get_weather",
+  description: "Gets the current weather for a location",
+  parameter_schema: %{
+    "type" => "object",
+    "properties" => %{"location" => %{"type" => "string"}},
+    "required" => ["location"]
+  },
+  callback: fn %{"location" => loc} ->
+    {:ok, "72°F, sunny in #{loc}"}
+  end
+)
+
+context = Chat.new_context("You are a weather assistant")
+
+{:ok, response, _ctx} = Chat.send_message("What's the weather in NYC?", context, tools: [weather])
+# The LLM will call the weather tool and include the result in its response
+```
+
+> **Warning:** `Chat.send_message/3` has a 60-second timeout. When tools are involved,
+> the LLM must make two round-trips (tool call + final response), which can exceed this
+> limit with slower providers. Use `ChatOrchestrator` for reliable tool usage.
+---
+
+## Part 4: Structured Output (Schemas)
+
+Schemas force the LLM to respond with valid JSON matching your specification. The orchestrator validates the output and automatically retries (up to `schema_max_retries`) if it doesn't conform.
+
+### With Chat.send_message
+
+```elixir
+schema = %{
+  "type" => "object",
+  "properties" => %{
+    "sentiment" => %{"type" => "string", "enum" => ["positive", "negative", "neutral"]},
+    "confidence" => %{"type" => "number"},
+    "keywords" => %{"type" => "array", "items" => %{"type" => "string"}}
+  },
+  "required" => ["sentiment", "confidence", "keywords"]
+}
+
+context = Chat.new_context("You are a sentiment analyzer")
+{:ok, result, _ctx} = Chat.send_message(
+  "Analyze: 'I absolutely love this product!'",
+  context,
+  schema: schema
+)
+# result is a validated map:
+# %{"sentiment" => "positive", "confidence" => 0.95, "keywords" => ["love", "product"]}
+```
+
+### With ChatOrchestrator
+
+When using schemas with the orchestrator, the `{:llm_end, _, payload}` event delivers the **validated map** instead of raw text:
+
+```elixir
+schema = %{
+  "type" => "object",
+  "properties" => %{
+    "invoice_number" => %{"type" => "string"},
+    "amount" => %{"type" => "number"},
+    "due_date" => %{"type" => "string"}
+  },
+  "required" => ["invoice_number", "amount", "due_date"]
+}
+
+context = (
+  "You are an invoice parser"
+  |> Chat.new_context()
+  |> ReqLLM.Context.append(
+    ReqLLM.Context.user("Extract: Invoice INV-2024-089 for $450.00 due July 1, 2024")
+  )
+)
+
+ChatOrchestrator.run(%{
+  llm_context: context,
+  on_event: fn
+    {:llm_end, _, validated_map} ->
+      IO.inspect(validated_map, label: "Structured output")
+    {:llm_error, _, %BranchedLLM.StructuredOutput.ValidationError{} = err} ->
+      IO.puts("Schema validation exhausted after retries")
+      IO.inspect(err)
+    {:llm_error, _, other} ->
+      IO.inspect(other, label: "Error")
+    _ -> :ok
+  end,
+  chat_mod: Chat,
+  branch_id: "main",
+  schema: schema,
+  schema_max_retries: 3
+})
+```
+
+If the LLM's first response doesn't match the schema, the orchestrator re-prompts with the validation errors — up to 3 retries in this example (default is 2).
+
+---
+
+## Part 5: Branching Conversations
+
+`BranchedChat` manages a tree of conversation branches. You can fork at any point to explore alternate paths.
+
+```elixir
+alias BranchedLLM.{BranchedChat, Chat, Message}
+
+context = Chat.new_context("You are a helpful assistant")
 chat = BranchedChat.new(Chat, [], context)
 
 # Add a user message to the current branch
 chat = BranchedChat.add_user_message(chat, "What is 2 + 2?")
-
-# Get messages from the current branch
-BranchedChat.get_current_messages(chat)
-```
-
----
-
-## Part 3: Branching Conversations
-
-This is where BranchedLLM shines. You can fork any conversation at any message.
-
-```elixir
-# Let's see the current messages
 messages = BranchedChat.get_current_messages(chat)
 
-# Branch off from the system message (start a new topic)
+# Branch off from the first message (start a new topic)
 branch_point_id = List.first(messages).id
-
 chat = BranchedChat.branch_off(chat, branch_point_id)
 
-# We're now on a new branch!
-chat.current_branch_id
-#=> "some-uuid-..."
+# We're now on a new branch
+chat.current_branch_id   #=> "some-uuid-..."
+chat.branch_ids          #=> ["main", "some-uuid-..."]
 
-chat.branch_ids
-#=> ["main", "some-uuid-..."]
-
-# The new branch only has messages up to the branch point (just the system message)
-BranchedChat.get_current_messages(chat)
-
-# Add a DIFFERENT follow-up on this new branch
+# Add a different follow-up on this new branch
 chat = BranchedChat.add_user_message(chat, "Tell me a story about space.")
 
-# Now switch back to main
+# Switch back to main
 chat = BranchedChat.switch_branch(chat, "main")
 ```
 
 ### Branch Tree
 
 ```elixir
-# View the full tree structure
 tree = BranchedChat.build_tree(chat)
 ```
 
 ---
 
-## Part 4: Message Queue and Busy State
+## Part 6: Message Queue and Busy State
 
-BranchedChat tracks whether a branch is actively processing an LLM response and queues additional messages.
+`BranchedChat` tracks whether a branch is actively processing an LLM response and queues additional messages.
 
 ```elixir
 # Initially, the branch is not busy
-BranchedChat.busy?(chat, "main")
-#=> false
+BranchedChat.busy?(chat, "main") #=> false
 
-# Simulate setting an active task (e.g., an LLM Task PID)
+# Mark the branch as busy (e.g., when an LLM Task starts)
 chat = BranchedChat.set_active_task(chat, "main", self(), "Hello")
-
-BranchedChat.busy?(chat, "main")
-#=> true
+BranchedChat.busy?(chat, "main") #=> true
 
 # While busy, you can enqueue messages
 chat = BranchedChat.enqueue_message(chat, "main", "Are you there?")
 
-# Dequeue messages when ready
+# Dequeue when ready
 {next, chat} = BranchedChat.dequeue_message(chat, "main")
 #=> {"Are you there?", ...}
 
@@ -150,140 +339,192 @@ chat = BranchedChat.clear_active_task(chat, "main")
 
 ---
 
-## Part 5: Tools
+## Part 7: Messages
 
-Tools allow the LLM to call your code. Let's create a calculator tool.
+The `Message` struct is the fundamental building block for `BranchedChat`. Every conversation message has a role, content, and unique ID.
 
 ```elixir
-calculator = ReqLLM.Tool.new!(
-  name: "calculator",
-  description: "Evaluates a mathematical expression",
-  parameter_schema: %{
-    type: "object",
-    properties: %{
-      expression: %{
-        type: "string",
-        description: "The expression to evaluate, e.g. '2 + 2'"
-      }
-    },
-    required: ["expression"]
-  },
-  callback: fn %{"expression" => expr} ->
-    # SECURITY WARNING: Using Code.eval_string on LLM output is dangerous.
-    # In a production app, use a safe math library or a restricted parser.
-    try do
-      {result, _} = Code.eval_string(expr)
-      {:ok, to_string(result)}
-    rescue
-      e -> {:error, "Failed: #{Exception.message(e)}"}
-    end
+alias BranchedLLM.Message
+
+# Create messages
+sys = Message.new(:system, "You are a helpful assistant.")
+user = Message.new(:user, "Hello, how are you?")
+assistant = Message.new(:assistant, "I'm doing great!")
+
+# Messages have unique IDs
+user.id  #=> "a1b2c3d4-..."
+
+# Custom ID
+msg = Message.new(:user, "Custom ID", id: "my-id")
+msg.id   #=> "my-id"
+
+# Add metadata (useful for tool calls, annotations, etc.)
+msg_with_meta = Message.new(:assistant, "Response", nil, %{tool_calls: [%{id: "tc1", name: "search"}]})
+
+# Soft delete
+deleted = Message.mark_deleted(user)
+Message.deleted?(deleted)  #=> true
+
+# Convert to/from legacy map format
+map = Message.to_map(user)
+#=> %{sender: :user, content: "Hello, how are you?", id: "...", deleted: false}
+restored = Message.from_map(map)
+```
+
+> **Note:** `BranchedLLM.Message` is used by `BranchedChat`. Under the hood, `Chat` and `ChatOrchestrator` work with `ReqLLM.Message` inside `ReqLLM.Context`. You typically don't need to construct `ReqLLM.Message` directly — use `Chat.new_context/1`, `ReqLLM.Context.user/1`, etc.
+
+---
+
+## Part 8: Context Window Management
+
+Long conversations can exceed the LLM's token limit (e.g., 128k for GPT-4), causing API errors. `ContextManager` prevents this by automatically trimming the context.
+
+### Estimating Token Count
+
+```elixir
+alias BranchedLLM.ContextManager
+
+context = Chat.new_context("You are a helpful assistant")
+ContextManager.estimate_tokens(context)          #=> 7
+ContextManager.estimate_tokens(context, chars_per_token: 2)  #=> 14
+```
+
+### Automatic Trimming
+
+Configure a max token limit and trimming happens automatically before LLM calls:
+
+```elixir
+# In config/config.exs
+config :branched_llm, max_tokens: 128_000
+
+# Or per-call:
+context = ReqLLM.Context.append(context, ReqLLM.Context.user("Hello!"))
+Chat.send_message_stream(context, max_tokens: 50_000)
+```
+
+### Manual Trimming
+
+```elixir
+context = Chat.new_context("You are a helpful assistant")
+context = ReqLLM.Context.append(context, ReqLLM.Context.user("First question"))
+context = ReqLLM.Context.append(context, ReqLLM.Context.assistant("First answer"))
+context = ReqLLM.Context.append(context, ReqLLM.Context.user("Second question"))
+
+# Trim to fit a small limit
+{trimmed, was_trimmed} = ContextManager.trim(context, max_tokens: 5)
+was_trimmed  #=> true
+
+# System messages are always preserved
+# The most recent messages are kept
+```
+
+### Built-in Strategies
+
+```elixir
+alias BranchedLLM.ContextManager.Strategy
+
+# Prune: drop oldest messages until context fits (default fallback)
+Strategy.Prune.trim(context, max_tokens: 5)
+
+# SlidingWindow: keep only the last N conversation messages
+Strategy.SlidingWindow.trim(context, keep: 4)
+
+# Percentage: keep the last 70% of conversation tokens
+Strategy.Percentage.trim(context, retain: 0.7)
+
+# Summarize: condense older messages into a single summary
+Strategy.Summarize.trim(context, recent_count: 4)
+```
+
+Configure a strategy globally:
+
+```elixir
+# In config/config.exs
+config :branched_llm,
+  max_tokens: 128_000,
+  trim_callback: {BranchedLLM.ContextManager.Strategy.SlidingWindow, :trim, [keep: 20]}
+```
+
+Or per-call:
+
+```elixir
+ContextManager.trim(context,
+  max_tokens: 128_000,
+  trim_callback: {Strategy.SlidingWindow, :trim, [keep: 10]}
+)
+```
+
+### Custom Strategy
+
+Implement the `Strategy` behaviour for your own trimming logic:
+
+```elixir
+defmodule MyApp.Strategy.KeepRecent do
+  @behaviour BranchedLLM.ContextManager.Strategy
+
+  @impl true
+  def trim(context, opts) do
+    keep = Keyword.get(opts, :keep, 10)
+    system = Enum.filter(context.messages, &(&1.role == :system))
+    conversation = Enum.reject(context.messages, &(&1.role == :system))
+    recent = Enum.take(conversation, -keep)
+    %{context | messages: system ++ recent}
   end
+end
+```
+
+Then use it:
+
+```elixir
+ContextManager.trim(context,
+  max_tokens: 128_000,
+  trim_callback: {MyApp.Strategy.KeepRecent, :trim, [keep: 20]}
 )
 ```
 
 ---
 
-## Part 6: Real-world Orchestration
+## Part 9: Error Handling
 
-The `ChatOrchestrator` runs the LLM request in a separate `Task`. In IEx, we can use a helper function to "listen" for the streaming chunks.
-
-### Run a Real Request
-
-The `on_event` function can be used to handle streaming updates directly. In this example, we'll write to STDOUT:
+Errors are returned as `{:error, message}` tuples:
 
 ```elixir
-alias BranchedLLM.{Chat, ChatOrchestrator}
-
-# llm_context holds the conversation history (system prompt + past messages).
-# message is the new user input — it gets appended to the context before calling the LLM.
-# They're separate so you can reuse the same context across multiple requests.
-context = Chat.new_context("You are a helpful assistant.")
-
-params = %{
-  message: "What is 123 * 456?",
-  llm_context: context,
-  on_event: fn
-    {:llm_chunk, _id, chunk} -> IO.write(chunk)
-    {:llm_status, _id, status} -> IO.puts("\n[Status: #{status}]")
-    {:llm_end, _id, _builder} -> IO.puts("\n[Stream Complete]")
-    {:llm_error, _id, err} -> IO.puts("\n[Error: #{err}]")
-    {:update_tool_usage_counts, _counts} -> :ok
-  end,
-  llm_tools: [calculator],
-  chat_mod: Chat,
-  tool_usage_counts: %{},
-  branch_id: "main"
-}
-
-# Start the async orchestrator
-{:ok, _task_pid} = ChatOrchestrator.run(params)
-```
-
-You will see the output appearing in your IEx session as the AI responds!
-
-
----
-
-## Part 7: Error Handling
-
-```elixir
-alias BranchedLLM.LLMErrorFormatter
-
-# Simulate a rate limit error
-rate_error = %ReqLLM.Error.API.Request{
-  status: 429,
-  reason: "Too many requests",
-  response_body: %{
-    "details" => [%{"@type" => "...", "retryDelay" => "30s"}]
-  }
-}
-
-LLMErrorFormatter.format(rate_error)
-#=> "The AI is busy. Wait a moment and try again later. Please retry in 30s."
+case Chat.send_message("Hello", context) do
+  {:ok, response, new_context} ->
+    IO.puts(response)
+  {:error, message} ->
+    IO.puts("Error: #{message}")
+end
 ```
 
 ---
 
-## Part 8: Putting It All Together — A Mini-App
+## Part 10: Putting It All Together — A Mini-App
 
-You can run the built-in sample chat directly to see everything in action:
-
-```elixir
-# If you have the sample_chat.ex file:
-# c "sample_chat.ex"
-# SampleChat.start()
-```
-
-Or implement a quick loop in IEx:
+A quick REPL loop in IEx:
 
 ```elixir
 defmodule IExChat do
-  alias BranchedLLM.{BranchedChat, Message, Chat}
+  alias BranchedLLM.Chat
 
   def start do
     context = Chat.new_context("You are a concise assistant.")
-    chat = BranchedChat.new(Chat, [], context)
-    loop(chat)
+    loop(context)
   end
 
-  defp loop(chat) do
-    input = IO.gets("\nYou> ") |> String.trim()
-    if input == "quit", do: :ok, else: send_and_wait(chat, input)
-  end
-
-  defp send_and_wait(chat, input) do
-    chat = BranchedChat.add_user_message(chat, input)
-    IO.write("AI> ")
-    {:ok, response, new_context} = Chat.send_message(input, BranchedChat.get_current_context(chat))
-    IO.puts(response)
-    
-    # Update branch state manually for this simple example
-    updated_branch = %{chat.branches["main"] | context: new_context, messages: chat.branches["main"].messages ++ [Message.new(:assistant, response)]}
-    loop(%{chat | branches: %{"main" => updated_branch}})
+  defp loop(context) do
+    case IO.gets("\nYou> ") |> String.trim() do
+      "quit" -> :ok
+      input  ->
+        IO.write("AI> ")
+        {:ok, response, new_context} = Chat.send_message(input, context)
+        IO.puts(response)
+        loop(new_context)
+    end
   end
 end
 
-# IExChat.start()
+IExChat.start()
 ```
 
 ---
@@ -292,11 +533,14 @@ end
 
 | Concept | Module | Key Functions |
 |---|---|---|
-| Messages | `BranchedLLM.Message` | `new/3`, `mark_deleted/1` |
-| Branching | `BranchedLLM.BranchedChat` | `branch_off/2`, `switch_branch/2` |
-| Chat | `BranchedLLM.Chat` | `send_message/3`, `send_message_stream/3` |
+| Chat | `BranchedLLM.Chat` | `new_context/1`, `send_message/2,3`, `reset_context/1` |
 | Orchestration | `BranchedLLM.ChatOrchestrator` | `run/1` |
-| Errors | `BranchedLLM.LLMErrorFormatter` | `format/1` |
+| Tools | `ReqLLM.Tool` | `new!/1` (pass via `:tools` option) |
+| Structured Output | `BranchedLLM.Chat` / `ChatOrchestrator` | pass `schema:` option |
+| Branching | `BranchedLLM.BranchedChat` | `branch_off/2`, `switch_branch/2` |
+| Messages | `BranchedLLM.Message` | `new/3`, `mark_deleted/1` |
+| Context Window | `BranchedLLM.ContextManager` | `trim/2`, `estimate_tokens/2` |
+| Errors | `{:error, message}` tuple | pattern match on `{:error, _}` |
 | Caching | `BranchedLLM.ToolCache` | `get_result/2`, `save_result/3` |
 
 ---

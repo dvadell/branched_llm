@@ -2,16 +2,17 @@ defmodule BranchedLLM.BranchedChat do
   @moduledoc """
   Manages a tree-like conversation structure with multiple branches.
 
-  Messages are stored as `BranchedLLM.Message` structs internally. The `branch_metadata`
-  type documents the shape of each branch's data.
+  Messages are stored as `BranchedLLM.Message` structs internally.
+  The `branch_metadata` type documents the shape of each branch's data.
 
   ## Message Protocol
 
   Each message in a branch's `messages` list is a `BranchedLLM.Message` struct with:
-    * `:role` - `:user`, `:assistant`, or `:system`
-    * `:content` - The text content
-    * `:id` - Unique identifier
-    * `:metadata` - Optional map (e.g., `%{deleted: true}`)
+
+  * `:role` - `:user`, `:assistant`, or `:system`
+  * `:content` - The text content
+  * `:id` - Unique identifier
+  * `:metadata` - Optional map (e.g., `%{deleted: true}`)
 
   ## Example
 
@@ -19,10 +20,11 @@ defmodule BranchedLLM.BranchedChat do
       iex> chat = BranchedLLM.BranchedChat.add_user_message(chat, "Hello!")
       iex> BranchedLLM.BranchedChat.get_current_messages(chat)
       [%BranchedLLM.Message{role: :user, content: "Hello!", ...}]
-
   """
 
+  alias BranchedLLM.ContextManager
   alias BranchedLLM.Message
+
   alias ReqLLM.Context
 
   defstruct [
@@ -96,7 +98,6 @@ defmodule BranchedLLM.BranchedChat do
   """
   def add_user_message(%__MODULE__{} = t, content) do
     user_message = Message.new(:user, content)
-
     branch = t.branches[t.current_branch_id]
 
     # Update name if it's empty (meaning this is the first message in a new branch)
@@ -114,7 +115,6 @@ defmodule BranchedLLM.BranchedChat do
 
     updated_branch = %{branch | name: name, messages: branch.messages ++ [user_message]}
     branches = Map.put(t.branches, t.current_branch_id, updated_branch)
-
     %{t | branches: branches}
   end
 
@@ -126,7 +126,6 @@ defmodule BranchedLLM.BranchedChat do
     updated_messages = do_append_chunk(chunk, branch.messages)
     updated_branch = %{branch | messages: updated_messages, tool_status: nil}
     branches = Map.put(t.branches, branch_id, updated_branch)
-
     %{t | branches: branches}
   end
 
@@ -144,12 +143,11 @@ defmodule BranchedLLM.BranchedChat do
   end
 
   @doc """
-  Finalizes an AI response with the new context.
+  Finalizes an AI response with the full text of the assistant's reply.
   """
-  def finish_ai_response(%__MODULE__{} = t, branch_id, llm_context_builder) do
+  def finish_ai_response(%__MODULE__{} = t, branch_id, full_text) do
     branch = t.branches[branch_id]
-    final_content = get_last_assistant_message_content(branch.messages)
-    updated_llm_context = llm_context_builder.(final_content)
+    updated_llm_context = Context.append(branch.context, Context.assistant(full_text))
 
     updated_branch = %{
       branch
@@ -160,15 +158,7 @@ defmodule BranchedLLM.BranchedChat do
     }
 
     branches = Map.put(t.branches, branch_id, updated_branch)
-
     %{t | branches: branches}
-  end
-
-  defp get_last_assistant_message_content(messages) do
-    case List.last(messages) do
-      %Message{role: :assistant, content: content} -> content
-      _ -> ""
-    end
   end
 
   @doc """
@@ -176,7 +166,6 @@ defmodule BranchedLLM.BranchedChat do
   """
   def add_error_message(%__MODULE__{} = t, branch_id, error_content) do
     error_message_obj = Message.new(:assistant, error_content)
-
     branch = t.branches[branch_id]
 
     updated_branch = %{
@@ -188,7 +177,6 @@ defmodule BranchedLLM.BranchedChat do
     }
 
     branches = Map.put(t.branches, branch_id, updated_branch)
-
     %{t | branches: branches}
   end
 
@@ -197,6 +185,7 @@ defmodule BranchedLLM.BranchedChat do
   """
   def branch_off(%__MODULE__{} = t, message_id) do
     messages = t.branches[t.current_branch_id].messages
+
     idx = Enum.find_index(messages, fn msg -> msg.id == message_id end)
 
     if is_nil(idx) do
@@ -248,25 +237,29 @@ defmodule BranchedLLM.BranchedChat do
       end)
 
     new_llm_context = rebuild_context_from_messages(updated_messages, t)
-
     updated_branch = %{branch | messages: updated_messages, context: new_llm_context}
     branches = Map.put(t.branches, t.current_branch_id, updated_branch)
-
     %{t | branches: branches}
   end
 
   defp rebuild_context_from_messages(messages, t) do
-    messages
-    |> Enum.drop(1)
-    |> Enum.reject(&Message.deleted?/1)
-    |> Enum.reduce(t.chat_module.reset_context(t.branches[t.current_branch_id].context), fn msg,
-                                                                                            acc ->
-      case msg.role do
-        :user -> Context.append(acc, Context.user(msg.content))
-        :assistant -> Context.append(acc, Context.assistant(msg.content))
-        :system -> acc
-      end
-    end)
+    rebuilt =
+      messages
+      |> Enum.drop(1)
+      |> Enum.reject(&Message.deleted?/1)
+      |> Enum.reduce(
+        t.chat_module.reset_context(t.branches[t.current_branch_id].context),
+        fn msg, acc ->
+          case msg.role do
+            :user -> Context.append(acc, Context.user(msg.content))
+            :assistant -> Context.append(acc, Context.assistant(msg.content))
+            :system -> acc
+          end
+        end
+      )
+
+    {trimmed, _was_trimmed} = ContextManager.trim(rebuilt)
+    trimmed
   end
 
   @doc """
@@ -276,7 +269,10 @@ defmodule BranchedLLM.BranchedChat do
     adj =
       Enum.reduce(t.branch_ids, %{}, fn id, acc ->
         parent_id = t.branches[id].parent_branch_id
-        Map.update(acc, parent_id, [id], fn children -> children ++ [id] end)
+
+        Map.update(acc, parent_id, [id], fn children ->
+          children ++ [id]
+        end)
       end)
 
     build_node = fn build_node, id ->
@@ -284,7 +280,10 @@ defmodule BranchedLLM.BranchedChat do
 
       %{
         id: id,
-        children: Enum.map(children, fn child_id -> build_node.(build_node, child_id) end)
+        children:
+          Enum.map(children, fn child_id ->
+            build_node.(build_node, child_id)
+          end)
       }
     end
 

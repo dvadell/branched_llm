@@ -1,9 +1,12 @@
 defmodule BranchedLLM.ChatBehaviour do
   @moduledoc """
-  Behaviour for Chat AI interactions.
+  Behaviour for the frontend Chat API.
 
-  Any module implementing this behaviour must provide the callbacks
-  for creating contexts, sending messages, executing tools, and health checks.
+  Modules implementing this behaviour provide the user-facing convenience
+  functions: synchronous message sending, context creation/reset, and
+  health checks. These are the functions that callers use directly — as
+  opposed to `BranchedLLM.ChatClientBehaviour`, which defines the contract
+  between the orchestrator and its LLM backend (`chat_mod`).
 
   ## Example
 
@@ -17,18 +20,14 @@ defmodule BranchedLLM.ChatBehaviour do
 
         # ... implement other callbacks
       end
-
   """
+
   alias ReqLLM.Context
-  alias ReqLLM.Tool
 
   @callback new_context(String.t()) :: Context.t()
   @callback reset_context(Context.t()) :: Context.t()
-  @callback send_message_stream(String.t(), Context.t(), keyword()) ::
-              {:ok, ReqLLM.StreamResponse.t(), (String.t() -> Context.t()), list()}
-              | {:error, term()}
   @callback send_message(String.t(), Context.t(), keyword()) ::
-              {:ok, String.t(), Context.t()} | {:error, term()}
-  @callback execute_tool(Tool.t(), map()) :: {:ok, term()} | {:error, term()}
+              {:ok, String.t() | map(), Context.t()} | {:error, term()}
+  @callback get_history(Context.t()) :: list()
   @callback health_check() :: :ok | {:error, term()}
 end

@@ -20,6 +20,7 @@ If you are wondering whether to use `BranchedLLM` or just stick with `ReqLLM` di
 | **Branching** | ❌ No | ✅ **First-class feature** |
 | **Async Orchestration**| ❌ Manual | ✅ **Automatic (`ChatOrchestrator`)** |
 | **Tool Loop** | ❌ Manual (One-off) | ✅ **Recursive (Auto-execute & loop)** |
+| **Context Window Mgmt**| ❌ No | ✅ **Automatic trimming + custom callbacks** |
 | **Message IDs** | ❌ No (List-based) | ✅ **Immutable IDs for UI tracking** |
 | **Error Handling** | ❌ Raw API Errors | ✅ **Human-friendly formatting** |
 | **Caching** | ❌ No | ✅ **Tool result caching** |
@@ -54,6 +55,27 @@ When an LLM calls a tool, the process is:
 *   "Delete this specific message"
 *   "Edit this message and re-run from here"
 *   "Highlight the tool calls associated with this response"
+### 5. Context Window Management
+
+In `ReqLLM`, you must manually track token counts and trim messages before they exceed the LLM's context window — otherwise you get a 400 error. `BranchedLLM.ContextManager` handles this automatically:
+
+* **Token estimation** — Approximates token count from message content.
+* **Automatic trimming** — Before each LLM call, messages are trimmed if they exceed the configured `max_tokens` limit.
+* **System message preservation** — System prompts are never removed.
+* **Pluggable strategies** — Four built-in strategies (Prune, SlidingWindow, Percentage, Summarize) plus a behaviour for custom strategies.
+
+```elixir
+# ReqLLM: You manage this yourself
+messages = Enum.take(messages, -50)  # hope 50 messages fit...
+
+# BranchedLLM: Automatic, configurable, extensible
+config :branched_llm, max_tokens: 128_000
+
+# Or with a specific strategy:
+config :branched_llm,
+  max_tokens: 128_000,
+  trim_callback: {BranchedLLM.ContextManager.Strategy.SlidingWindow, :trim, [keep: 20]}
+```
 
 ---
 
@@ -74,8 +96,8 @@ You might prefer to use `ReqLLM` without the `BranchedLLM` wrapper if:
 | `ReqLLM.StreamResponse`| `BranchedLLM.ChatOrchestrator`| Manages the lifecycle of the stream response, handling tools and retries. |
 | `ReqLLM.Tool.execute/2` | `BranchedLLM.ToolHandler` | Orchestrates the execution of *multiple* tool calls and context injection. |
 | N/A | `BranchedLLM.ToolCache` | Adds an Ecto-backed persistence layer for tool results (missing in ReqLLM). |
-| N/A | `BranchedLLM.LLMErrorFormatter`| Translates raw HTTP/API errors into user-friendly strings. |
+| N/A | `BranchedLLM.ContextManager` | Enforces context window limits with token estimation and pluggable trim strategies. |
 
 ## Conclusion
 
-`BranchedLLM` isn't just a wrapper; it's a **state engine**. It takes the excellent foundations of `ReqLLM` and adds the machinery needed to build "Chat-GPT-like" interfaces where branching, background orchestration, and resilient error handling are required.
+`BranchedLLM` isn't just a wrapper; it's a **state engine**. It takes the excellent foundations of `ReqLLM` and adds the machinery needed to build "Chat-GPT-like" interfaces where branching, background orchestration, context management, and resilient error handling are required.

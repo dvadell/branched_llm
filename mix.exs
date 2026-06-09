@@ -1,7 +1,7 @@
 defmodule BranchedLLM.MixProject do
   use Mix.Project
 
-  @version "0.1.2"
+  @version "0.2.0"
   @source_url "https://github.com/dvadell/branched_llm"
 
   def project do
@@ -15,16 +15,35 @@ defmodule BranchedLLM.MixProject do
       aliases: aliases(),
       package: package(),
       description: "A branched conversation library for LLM interactions with tool support",
-      test_coverage: test_coverage()
+      test_coverage: test_coverage(),
+      dialyzer: [plt_add_deps: :app_tree, plt_add_apps: [:llm_db, :ex_unit]],
+      elixirc_paths: elixirc_paths(Mix.env())
     ]
   end
 
+  defp elixirc_paths(:test), do: ["lib", "test/support"]
+  defp elixirc_paths(_), do: ["lib"]
+
   defp test_coverage do
+    # In live mode, bypass-only tests are excluded so coverage is
+    # naturally low — don't enforce the threshold.
+    threshold = if System.get_env("LLM_TEST_MODE") == "live", do: 0, else: 90
+
     [
-      summary: [threshold: 90],
+      summary: [threshold: threshold],
       ignore_modules: [
+        BranchedLLM.E2E.TestCase,
+        # Modules above ChatOrchestrator.run/1 in the call hierarchy —
+        # not reachable from the e2e entrypoint; have their own unit tests.
+        BranchedLLM,
+        BranchedLLM.BranchedChat,
+        BranchedLLM.Message,
+        BranchedLLM.UUID,
         BranchedLLM.Chat,
-        BranchedLLM.ToolCache
+        BranchedLLM.ChatBehaviour,
+        BranchedLLM.ChatClientBehaviour,
+        # Conditionally loaded — only reachable when Ecto is configured.
+        BranchedLLM.ToolCache.Ecto
       ]
     ]
   end
@@ -37,7 +56,7 @@ defmodule BranchedLLM.MixProject do
 
   defp deps do
     [
-      {:req_llm, "~> 1.11.0"},
+      {:req_llm, "~> 1.13.0"},
       {:ecto, "~> 3.13", optional: true},
       {:jason, "~> 1.2"},
       {:retry, "~> 0.18"},
@@ -48,6 +67,7 @@ defmodule BranchedLLM.MixProject do
       {:credo, "~> 1.7", only: [:dev, :test], runtime: false},
       {:dialyxir, "~> 1.4", only: [:dev, :test], runtime: false},
       {:mox, "~> 1.0", only: :test},
+      {:bypass, "~> 2.1", only: :test},
       {:ex_slop, "~> 0.1", only: [:dev, :test], runtime: false},
       {:credo_contrib, "~> 0.2.0", only: [:dev, :test], runtime: false}
     ]
