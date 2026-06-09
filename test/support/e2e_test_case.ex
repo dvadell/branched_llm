@@ -136,7 +136,7 @@ defmodule BranchedLLM.E2E.TestCase do
     %{
       llm_context: context,
       llm_tools: Keyword.get(overrides, :llm_tools, []),
-      chat_mod: BranchedLLM.Chat,
+      chat_mod: BranchedLLM.ChatClient,
       tool_usage_counts: %{},
       branch_id: "test"
     }

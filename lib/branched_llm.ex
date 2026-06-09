@@ -23,18 +23,18 @@ defmodule BranchedLLM do
    
   """
 
-  alias BranchedLLM.{BranchedChat, ChatOrchestrator, Message}
+  alias BranchedLLM.{BranchedChat, ChatClient, ChatOrchestrator, Message}
   alias ReqLLM.Context
 
   @doc """
   Creates a new `BranchedChat` with the given chat module, initial messages, and context.
 
-      iex> BranchedLLM.new_chat(BranchedLLM.Chat, [], context)
+      iex> BranchedLLM.new_chat(BranchedLLM.ChatClient, [], context)
       %BranchedLLM.BranchedChat{...}
 
   """
   @spec new_chat(module(), [Message.t()], ReqLLM.Context.t()) :: BranchedChat.t()
-  def new_chat(chat_module, initial_messages, initial_context) do
+  def new_chat(chat_module \\ ChatClient, initial_messages, initial_context) do
     BranchedChat.new(chat_module, initial_messages, initial_context)
   end
 

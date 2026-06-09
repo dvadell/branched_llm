@@ -21,7 +21,7 @@ defmodule BranchedLLM.E2E.ContextManagementTest do
       params = %{
         llm_context: context,
         llm_tools: [],
-        chat_mod: BranchedLLM.Chat,
+        chat_mod: BranchedLLM.ChatClient,
         tool_usage_counts: %{},
         branch_id: "test"
       }
@@ -55,7 +55,7 @@ defmodule BranchedLLM.E2E.ContextManagementTest do
       params = %{
         llm_context: context,
         llm_tools: [],
-        chat_mod: BranchedLLM.Chat,
+        chat_mod: BranchedLLM.ChatClient,
         tool_usage_counts: %{},
         branch_id: "test"
       }
@@ -89,7 +89,7 @@ defmodule BranchedLLM.E2E.ContextManagementTest do
       params = %{
         llm_context: context,
         llm_tools: [],
-        chat_mod: BranchedLLM.Chat,
+        chat_mod: BranchedLLM.ChatClient,
         tool_usage_counts: %{},
         branch_id: "test"
       }
@@ -123,7 +123,7 @@ defmodule BranchedLLM.E2E.ContextManagementTest do
       params = %{
         llm_context: context,
         llm_tools: [],
-        chat_mod: BranchedLLM.Chat,
+        chat_mod: BranchedLLM.ChatClient,
         tool_usage_counts: %{},
         branch_id: "test"
       }
@@ -156,7 +156,7 @@ defmodule BranchedLLM.E2E.ContextManagementTest do
       params = %{
         llm_context: context,
         llm_tools: [],
-        chat_mod: BranchedLLM.Chat,
+        chat_mod: BranchedLLM.ChatClient,
         tool_usage_counts: %{},
         branch_id: "test"
       }
@@ -189,7 +189,7 @@ defmodule BranchedLLM.E2E.ContextManagementTest do
       params = %{
         llm_context: context,
         llm_tools: [],
-        chat_mod: BranchedLLM.Chat,
+        chat_mod: BranchedLLM.ChatClient,
         tool_usage_counts: %{},
         branch_id: "test"
       }
@@ -221,7 +221,7 @@ defmodule BranchedLLM.E2E.ContextManagementTest do
           params = %{
             llm_context: context,
             llm_tools: [],
-            chat_mod: BranchedLLM.Chat,
+            chat_mod: BranchedLLM.ChatClient,
             tool_usage_counts: %{},
             branch_id: "test"
           }
@@ -254,7 +254,7 @@ defmodule BranchedLLM.E2E.ContextManagementTest do
           params = %{
             llm_context: context,
             llm_tools: [],
-            chat_mod: BranchedLLM.Chat,
+            chat_mod: BranchedLLM.ChatClient,
             tool_usage_counts: %{},
             branch_id: "test"
           }
@@ -287,7 +287,7 @@ defmodule BranchedLLM.E2E.ContextManagementTest do
           params = %{
             llm_context: context,
             llm_tools: [],
-            chat_mod: BranchedLLM.Chat,
+            chat_mod: BranchedLLM.ChatClient,
             tool_usage_counts: %{},
             branch_id: "test"
           }
@@ -323,7 +323,7 @@ defmodule BranchedLLM.E2E.ContextManagementTest do
       params = %{
         llm_context: context,
         llm_tools: [],
-        chat_mod: BranchedLLM.Chat,
+        chat_mod: BranchedLLM.ChatClient,
         tool_usage_counts: %{},
         branch_id: "test"
       }
@@ -362,7 +362,7 @@ defmodule BranchedLLM.E2E.ContextManagementTest do
       params = %{
         llm_context: context,
         llm_tools: [],
-        chat_mod: BranchedLLM.Chat,
+        chat_mod: BranchedLLM.ChatClient,
         tool_usage_counts: %{},
         branch_id: "test"
       }
@@ -399,7 +399,7 @@ defmodule BranchedLLM.E2E.ContextManagementTest do
       params = %{
         llm_context: context,
         llm_tools: [],
-        chat_mod: BranchedLLM.Chat,
+        chat_mod: BranchedLLM.ChatClient,
         tool_usage_counts: %{},
         branch_id: "test"
       }

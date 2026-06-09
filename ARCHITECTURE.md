@@ -19,6 +19,8 @@ There are two convenience wrappers that delegate to `run/1`:
 | `BranchedLLM.send_message/5` | `BranchedLLM` | No | Reads context from a `BranchedChat` struct, appends the user message, calls `ChatOrchestrator.run/1` |
 | `Chat.send_message/3` | `BranchedLLM.Chat` | Yes | Blocks until `:llm_end` or `:llm_error` (60 s timeout) |
 
+The orchestrator calls into a `chat_mod` module (default: `BranchedLLM.ChatClient`) for LLM communication, tool execution, and model resolution. See the **Module Map** below for the `Chat`/`ChatClient` split.
+
 ---
 
 ## Visual Summary
@@ -28,7 +30,7 @@ ChatOrchestrator.run(params) ─── Task.start ─── retry (10×, 100 ms)
 │
 └─► process_llm_request(params) ◄──── RECURSIVE ENTRY
     │
-    ├─► Chat.send_message_stream/2
+    ├─► ChatClient.send_message_stream/2
     │   ├─ ContextManager.trim (if over max_tokens)
     │   └─ call_llm
     │       ├─ Enforcer.prepare_request (if schema → inject provider_options)
@@ -106,8 +108,10 @@ No ordering guarantee between `:llm_metadata` and other events; it is emitted as
 | Module | File | Role |
 |--------|------|------|
 | `ChatOrchestrator` | `lib/branched_llm/chat_orchestrator.ex` | Main entry point. Spawns a `Task`, retries on error, drives the recursive LLM→tool→LLM loop. |
-| `Chat` | `lib/branched_llm/chat.ex` | Default `ChatBehaviour` implementation. Wraps `ReqLLM.stream_text/3`, classifies streams into `StreamResult` variants, manages context trimming and API keys. |
-| `ChatBehaviour` | `lib/branched_llm/chat_behaviour.ex` | Behaviour contract — `send_message_stream/2`, `execute_tool/2`, `default_model/0`, etc. Swap backends by implementing this. |
+| `ChatClient` | `lib/branched_llm/chat_client.ex` | The `chat_mod` the orchestrator calls into. Wraps `ReqLLM.stream_text/3`, classifies streams into `StreamResult` variants, executes tools with caching, resolves models. Implements `ChatClientBehaviour`. |
+| `ChatClientBehaviour` | `lib/branched_llm/chat_client_behaviour.ex` | Behaviour contract for the orchestrator's LLM backend — `send_message_stream/2`, `execute_tool/2`, `default_model/0`, `stream_text/3`. Swap backends by implementing this. |
+| `Chat` | `lib/branched_llm/chat.ex` | Frontend convenience API — sync `send_message/3`, `new_context/1`, `get_history/1`, `reset_context/1`, `health_check/0`. Delegates `ChatClient` functions for backward compatibility. |
+| `ChatBehaviour` | `lib/branched_llm/chat_behaviour.ex` | Behaviour contract for the frontend Chat API. |
 
 ### Result types
 
@@ -174,7 +178,7 @@ config :branched_llm,
   base_url: System.get_env("LLM_BASE_URL") || "http://host.docker.internal:11434"
 ```
 
-`Chat.default_model/0` reads `:ai_model`, resolves `"provider:model_id"` strings into `%LLMDB.Model{}` structs via `ReqLLM.model/1`. `Chat.stream_text/3` passes `base_url` and `api_key` from `endpoints/0` directly to `ReqLLM.stream_text/3` as options, so `ReqLLM` never needs its own config block.
+`ChatClient.default_model/0` reads `:ai_model`, resolves `"provider:model_id"` strings into `%LLMDB.Model{}` structs via `ReqLLM.model/1`. `ChatClient.stream_text/3` passes `base_url` from `endpoints/0` directly to `ReqLLM.stream_text/3` as options, so `ReqLLM` never needs its own config block.
 
 ---
 
@@ -195,7 +199,7 @@ The system has two independent retry mechanisms:
 ## Data Flow: `call_llm` → `StreamResult`
 
 ```
-Chat.send_message_stream(context, opts)
+ChatClient.send_message_stream(context, opts)
   └─► call_llm(model, context, tools, opts)
        └─► ReqLLM.stream_text(model, messages, opts) ──► {:ok, StreamResponse}
             └─► stream_result(stream_response, tools)
