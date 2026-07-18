@@ -10,4 +10,4 @@ excluded_tags =
     _ -> [:live]
   end
 
-ExUnit.start(exclude: excluded_tags)
+ExUnit.start(exclude: excluded_tags, capture_log: true)

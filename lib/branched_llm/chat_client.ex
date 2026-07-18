@@ -30,6 +30,8 @@ defmodule BranchedLLM.ChatClient do
   alias ReqLLM.StreamResponse
   alias ReqLLM.ToolCall
 
+  alias BranchedLLM.ProviderConfig
+
   @behaviour BranchedLLM.ChatClientBehaviour
 
   @doc """
@@ -80,7 +82,9 @@ defmodule BranchedLLM.ChatClient do
   @spec default_model() :: ReqLLM.model_input()
   @impl true
   def default_model do
-    model_string = Application.get_env(:branched_llm, :ai_model, "ollama:cara-cpu")
+    model_string =
+      Application.get_env(:cara, :ai_model) ||
+        Application.get_env(:branched_llm, :ai_model, "ollama:cara-cpu")
 
     case resolve_model(model_string) do
       {:ok, model} -> model
@@ -101,12 +105,14 @@ defmodule BranchedLLM.ChatClient do
   @spec stream_text(ReqLLM.model_input(), Context.t(), keyword()) ::
           {:ok, StreamResponse.t()} | {:error, term()}
   def stream_text(model, context, opts) do
-    %{model_endpoint: model_endpoint} = endpoints()
+    provider = ProviderConfig.resolve_provider(model)
+    %{model_endpoint: model_endpoint} = ProviderConfig.endpoints(provider)
     model_endpoint = Keyword.get(opts, :base_url, model_endpoint)
+    api_key = Keyword.get(opts, :api_key) || ProviderConfig.api_key(provider)
     tools = Keyword.get(opts, :tools, [])
     provider_options = Keyword.get(opts, :provider_options, [])
 
-    base_opts = [tools: tools, base_url: model_endpoint]
+    base_opts = [tools: tools, base_url: model_endpoint, api_key: api_key]
 
     stream_opts =
       if provider_options != [] do
@@ -265,33 +271,6 @@ defmodule BranchedLLM.ChatClient do
 
   defp default_tool_cache do
     Application.get_env(:branched_llm, :tool_cache, BranchedLLM.ToolCache)
-  end
-
-  @spec endpoints() :: %{
-          base_url: String.t(),
-          model_endpoint: String.t(),
-          health_endpoint: String.t()
-        }
-  defp endpoints do
-    config_url = Application.get_env(:branched_llm, :base_url) || "http://localhost:11434"
-    uri = URI.parse(config_url)
-    host = uri.host || "localhost"
-    scheme = uri.scheme || "http"
-    port_str = if uri.port, do: ":#{uri.port}", else: ""
-    base_url = "#{scheme}://#{host}#{port_str}"
-
-    model_endpoint =
-      if String.ends_with?(config_url, "/v1") do
-        config_url
-      else
-        base_url <> "/v1"
-      end
-
-    %{
-      base_url: base_url,
-      model_endpoint: model_endpoint,
-      health_endpoint: base_url <> "/api/tags"
-    }
   end
 
   # OpenTelemetry helpers
