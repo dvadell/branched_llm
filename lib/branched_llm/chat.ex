@@ -19,6 +19,7 @@ defmodule BranchedLLM.Chat do
 
   require Logger
 
+  alias BranchedLLM.ProviderConfig
   alias ReqLLM.Context
 
   @behaviour BranchedLLM.ChatBehaviour
@@ -163,10 +164,15 @@ defmodule BranchedLLM.Chat do
 
   @doc """
   Checks if the configured LLM provider is available.
+
+  Optionally accepts a `:provider` option to check a specific provider's
+  health endpoint (e.g. `:ollama`, `:nvidia`). Defaults to the provider
+  derived from the configured model.
   """
   @impl true
-  def health_check do
-    %{health_endpoint: health_endpoint} = endpoints()
+  def health_check(opts \\ []) do
+    provider = Keyword.get(opts, :provider, default_provider())
+    %{health_endpoint: health_endpoint} = ProviderConfig.endpoints(provider)
 
     Logger.info("Checking AI health at: #{health_endpoint}")
 
@@ -185,6 +191,11 @@ defmodule BranchedLLM.Chat do
         Logger.info("AI health check failed with error: #{inspect(reason)}")
         {:error, :unavailable}
     end
+  end
+
+  defp default_provider do
+    model = BranchedLLM.ChatClient.default_model()
+    ProviderConfig.resolve_provider(model)
   end
 
   ## Private Functions
@@ -218,33 +229,6 @@ defmodule BranchedLLM.Chat do
       nil -> params
       n -> Map.put(params, :schema_max_retries, n)
     end
-  end
-
-  @spec endpoints() :: %{
-          base_url: String.t(),
-          model_endpoint: String.t(),
-          health_endpoint: String.t()
-        }
-  defp endpoints do
-    config_url = Application.get_env(:branched_llm, :base_url) || "http://localhost:11434"
-    uri = URI.parse(config_url)
-    host = uri.host || "localhost"
-    scheme = uri.scheme || "http"
-    port_str = if uri.port, do: ":#{uri.port}", else: ""
-    base_url = "#{scheme}://#{host}#{port_str}"
-
-    model_endpoint =
-      if String.ends_with?(config_url, "/v1") do
-        config_url
-      else
-        base_url <> "/v1"
-      end
-
-    %{
-      base_url: base_url,
-      model_endpoint: model_endpoint,
-      health_endpoint: base_url <> "/api/tags"
-    }
   end
 
   if Code.ensure_loaded?(OpentelemetryReq) do

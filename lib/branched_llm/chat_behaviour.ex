@@ -29,5 +29,5 @@ defmodule BranchedLLM.ChatBehaviour do
   @callback send_message(String.t(), Context.t(), keyword()) ::
               {:ok, String.t() | map(), Context.t()} | {:error, term()}
   @callback get_history(Context.t()) :: list()
-  @callback health_check() :: :ok | {:error, term()}
+  @callback health_check(keyword()) :: :ok | {:error, term()}
 end
