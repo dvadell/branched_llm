@@ -52,6 +52,22 @@ config :branched_llm,
   base_url: System.get_env("LLM_BASE_URL") || "http://localhost:11434"
 ```
 
+### Request Callback
+
+You can supply a callback that runs before every HTTP request (both health checks and LLM API calls). This is useful for logging, instrumentation, or modifying requests:
+
+```elixir
+config :branched_llm, on_request: fn request ->
+  Logger.debug("HTTP request: #{inspect(request)}")
+  request
+end
+```
+
+The callback receives the request struct (`Req.Request` for health checks, `Finch.Request` for LLM streaming calls) and must return it (possibly modified). It is fired:
+
+- On every health check via `Req`
+- On every ReqLLM streaming call (forwarded as `on_finch_request` to ReqLLM)
+
 For tool result caching, the library defaults to `BranchedLLM.ToolCache.InMemory` (no-op). To use Ecto:
 
 ```elixir

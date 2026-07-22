@@ -91,6 +91,10 @@ defmodule BranchedLLM.ProviderConfig do
     end
   end
 
+  def resolve_provider(%{provider: provider}) when is_atom(provider) do
+    provider
+  end
+
   def resolve_provider(%LLMDB.Model{provider: provider}) when is_atom(provider) do
     provider
   end

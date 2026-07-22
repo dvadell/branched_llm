@@ -210,6 +210,10 @@ defmodule BranchedLLM.ChatOrchestrator.SchemaStream do
     end
   end
 
+  defp resolve_provider(%{provider: provider}) when is_atom(provider) do
+    provider
+  end
+
   defp resolve_provider(%LLMDB.Model{provider: provider}) when is_atom(provider) do
     provider
   end

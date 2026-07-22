@@ -176,9 +176,12 @@ defmodule BranchedLLM.Chat do
 
     Logger.info("Checking AI health at: #{health_endpoint}")
 
-    case Req.new(connect_options: [timeout: 1000], retry: false)
-         |> maybe_attach_telemetry()
-         |> Req.get(url: health_endpoint) do
+    request =
+      Req.new(connect_options: [timeout: 1000], retry: false)
+      |> maybe_attach_telemetry()
+      |> maybe_notify_on_request(:req)
+
+    case Req.get(request, url: health_endpoint) do
       {:ok, %{status: 200}} ->
         Logger.info("AI health check successful")
         :ok
@@ -228,6 +231,13 @@ defmodule BranchedLLM.Chat do
     case Keyword.get(opts, :schema_max_retries) do
       nil -> params
       n -> Map.put(params, :schema_max_retries, n)
+    end
+  end
+
+  defp maybe_notify_on_request(request, _tag) do
+    case Application.get_env(:branched_llm, :on_request) do
+      nil -> request
+      fun -> fun.(request)
     end
   end
 
