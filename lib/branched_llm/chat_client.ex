@@ -86,10 +86,7 @@ defmodule BranchedLLM.ChatClient do
       Application.get_env(:cara, :ai_model) ||
         Application.get_env(:branched_llm, :ai_model, "ollama:cara-cpu")
 
-    case resolve_model(model_string) do
-      {:ok, model} -> model
-      {:error, _} -> model_string
-    end
+    resolve_model(model_string)
   end
 
   @doc """
@@ -115,13 +112,15 @@ defmodule BranchedLLM.ChatClient do
     base_opts = [tools: tools, base_url: model_endpoint, api_key: api_key]
 
     stream_opts =
-      if provider_options != [] do
-        Keyword.put(base_opts, :provider_options, provider_options)
-      else
-        base_opts
-      end
+      if provider_options != [],
+        do: Keyword.put(base_opts, :provider_options, provider_options),
+        else: base_opts
 
-    ReqLLM.stream_text(model, context.messages, stream_opts)
+    stream_opts = maybe_put_on_finch_request(stream_opts)
+
+    resolved_model = resolve_model(model)
+
+    ReqLLM.stream_text(resolved_model, context.messages, stream_opts)
   end
 
   @doc """
@@ -187,23 +186,25 @@ defmodule BranchedLLM.ChatClient do
   defp maybe_put_provider_options_from_opts(opts, po),
     do: Keyword.put(opts, :provider_options, po)
 
-  # Resolves a "provider:model_id" string into a %LLMDB.Model{} without
-  # triggering the "unverified model" warning from ReqLLM.model/1.
-  @spec resolve_model(String.t()) :: {:ok, LLMDB.Model.t()} | {:error, term()}
-  defp resolve_model(model_string) do
-    case String.split(model_string, ":", parts: 2) do
-      [provider_str, model_id] ->
+  # Resolves a "provider:model_id" string into a ReqLLM model map
+  # to suppress the "unverified model" warning from ReqLLM.model/1.
+  @spec resolve_model(ReqLLM.model_input()) :: ReqLLM.model_input()
+  defp resolve_model(model) when is_binary(model) do
+    case String.split(model, ":", parts: 2) do
+      [provider_str, model_id] when provider_str != "" ->
         try do
           provider = String.to_existing_atom(provider_str)
-          ReqLLM.model(%{provider: provider, id: model_id})
+          %{provider: provider, id: model_id}
         rescue
-          ArgumentError -> ReqLLM.model(model_string)
+          ArgumentError -> model
         end
 
       _ ->
-        ReqLLM.model(model_string)
+        model
     end
   end
+
+  defp resolve_model(model), do: model
 
   # When no tools are provided, the stream is always content — no intent detection needed.
   @spec stream_result(StreamResponse.t(), list()) :: StreamResult.t()
@@ -271,6 +272,13 @@ defmodule BranchedLLM.ChatClient do
 
   defp default_tool_cache do
     Application.get_env(:branched_llm, :tool_cache, BranchedLLM.ToolCache)
+  end
+
+  defp maybe_put_on_finch_request(opts) do
+    case Application.get_env(:branched_llm, :on_request) do
+      nil -> opts
+      fun -> Keyword.put(opts, :on_finch_request, fun)
+    end
   end
 
   # OpenTelemetry helpers
