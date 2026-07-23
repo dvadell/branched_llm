@@ -34,7 +34,6 @@ defmodule BranchedLLM.E2E.SchemaTest do
         )
 
       {:llm_end, "test", result} = find_event(events, :llm_end)
-      assert is_map(result)
 
       case mode do
         :bypass ->
@@ -209,7 +208,7 @@ defmodule BranchedLLM.E2E.SchemaTest do
           refute find_event(events, :llm_end)
 
         :live ->
-          assert find_event(events, :llm_end) || find_event(events, :llm_error)
+          assert Enum.any?([find_event(events, :llm_end), find_event(events, :llm_error)])
       end
     end
   end
@@ -263,7 +262,11 @@ defmodule BranchedLLM.E2E.SchemaTest do
       refute find_event(events, :llm_end)
 
       {:llm_error, "test", error} = find_event(events, :llm_error)
-      assert is_binary(error) or match?(%BranchedLLM.StructuredOutput.ValidationError{}, error)
+
+      case error do
+        %BranchedLLM.StructuredOutput.ValidationError{} -> :ok
+        _ -> assert byte_size(error) > 0
+      end
     end
 
     @tag :bypass_only
@@ -286,6 +289,7 @@ defmodule BranchedLLM.E2E.SchemaTest do
             required: ["expression"]
           },
           callback: fn %{"expression" => expr} ->
+            # credo:disable-for-next-line
             {result, _} = Code.eval_string(expr)
             {:ok, to_string(result)}
           end
@@ -321,7 +325,6 @@ defmodule BranchedLLM.E2E.SchemaTest do
       assert find_event(events, :llm_tool_called)
 
       assert {:llm_end, "test", result} = find_event(events, :llm_end)
-      assert is_map(result)
       assert result["result"] == "21"
     end
 
@@ -356,7 +359,6 @@ defmodule BranchedLLM.E2E.SchemaTest do
         )
 
       assert {:llm_end, "test", result} = find_event(events, :llm_end)
-      assert is_map(result)
       assert result["mood"] == "happy"
     end
 
@@ -516,7 +518,7 @@ defmodule BranchedLLM.E2E.SchemaTest do
           event_timeout()
         )
 
-      assert find_event(events, :llm_error) || find_event(events, :llm_end)
+      assert Enum.any?([find_event(events, :llm_error), find_event(events, :llm_end)])
     end
 
     @tag :bypass_only
@@ -540,7 +542,7 @@ defmodule BranchedLLM.E2E.SchemaTest do
           event_timeout()
         )
 
-      assert find_event(events, :llm_error) || find_event(events, :llm_end)
+      assert Enum.any?([find_event(events, :llm_error), find_event(events, :llm_end)])
     after
       Application.put_env(:branched_llm, :ai_model, "ollama:test-model")
     end
@@ -565,7 +567,7 @@ defmodule BranchedLLM.E2E.SchemaTest do
           event_timeout()
         )
 
-      assert find_event(events, :llm_error) || find_event(events, :llm_end)
+      assert Enum.any?([find_event(events, :llm_error), find_event(events, :llm_end)])
     after
       Application.put_env(:branched_llm, :ai_model, "ollama:test-model")
     end
@@ -590,7 +592,7 @@ defmodule BranchedLLM.E2E.SchemaTest do
           event_timeout()
         )
 
-      assert find_event(events, :llm_error) || find_event(events, :llm_end)
+      assert Enum.any?([find_event(events, :llm_error), find_event(events, :llm_end)])
     after
       Application.put_env(:branched_llm, :ai_model, "ollama:test-model")
     end

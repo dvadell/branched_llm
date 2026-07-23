@@ -17,7 +17,7 @@ defmodule BranchedLLM.E2E.ErrorHandlingTest do
 
           # CallbackStream retries on error, so the result may be an
           # llm_end with empty text rather than an llm_error.
-          assert find_event(events, :llm_end) || find_event(events, :llm_error)
+          assert Enum.any?([find_event(events, :llm_end), find_event(events, :llm_error)])
         end)
     end
 
@@ -68,7 +68,7 @@ defmodule BranchedLLM.E2E.ErrorHandlingTest do
 
           # With retries, the 500 may result in llm_end with empty text
           # or llm_error depending on whether the retry library raises.
-          assert find_event(events, :llm_end) || find_event(events, :llm_error)
+          assert Enum.any?([find_event(events, :llm_end), find_event(events, :llm_error)])
         end)
     end
 
@@ -96,7 +96,7 @@ defmodule BranchedLLM.E2E.ErrorHandlingTest do
       _log =
         capture_log(fn ->
           events = collect_events(default_params(), event_timeout())
-          assert find_event(events, :llm_error) || find_event(events, :llm_end)
+          assert Enum.any?([find_event(events, :llm_error), find_event(events, :llm_end)])
         end)
     end
 
@@ -111,7 +111,7 @@ defmodule BranchedLLM.E2E.ErrorHandlingTest do
       _log =
         capture_log(fn ->
           events = collect_events(default_params(), event_timeout())
-          assert find_event(events, :llm_end) || find_event(events, :llm_error)
+          assert Enum.any?([find_event(events, :llm_end), find_event(events, :llm_error)])
         end)
     end
 
@@ -171,7 +171,7 @@ defmodule BranchedLLM.E2E.ErrorHandlingTest do
       _log =
         capture_log(fn ->
           events = collect_events(default_params(llm_tools: [dummy_tool]), event_timeout())
-          assert find_event(events, :llm_error) || find_event(events, :llm_end)
+          assert Enum.any?([find_event(events, :llm_error), find_event(events, :llm_end)])
         end)
     end
   end

@@ -69,8 +69,7 @@ defmodule BranchedLLM.ContextManager.Strategy.Prune do
     head_tokens = max(message_char_length(head) |> Kernel.div(@chars_per_token), 1)
 
     current_total =
-      acc
-      |> Enum.reduce(0, fn msg, sum ->
+      Enum.reduce(acc, 0, fn msg, sum ->
         sum + max(message_char_length(msg) |> Kernel.div(@chars_per_token), 1)
       end)
 

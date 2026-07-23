@@ -58,8 +58,7 @@ defmodule BranchedLLM.ChatClient do
     provider_options = Keyword.get(opts, :provider_options)
 
     call_opts =
-      []
-      |> maybe_put_provider_options_from_opts(provider_options)
+      maybe_put_provider_options_from_opts([], provider_options)
 
     {trimmed_context, was_trimmed} = ContextManager.trim(context, context_trim_opts(opts))
 
@@ -162,8 +161,7 @@ defmodule BranchedLLM.ChatClient do
           {:ok, StreamResult.t()} | {:error, term()}
   defp call_llm(model, context, tools, opts) do
     stream_opts =
-      [tools: tools]
-      |> maybe_put_provider_options(opts)
+      maybe_put_provider_options([tools: tools], opts)
 
     result =
       case stream_text(model, context, stream_opts) do

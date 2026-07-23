@@ -75,7 +75,7 @@ defmodule BranchedLLM.ChatTest do
 
     test "returns :ok on 200 response", %{bypass: bypass} do
       Bypass.expect(bypass, "GET", "/api/tags", fn conn ->
-        conn |> Conn.send_resp(200, "ok")
+        Conn.send_resp(conn, 200, "ok")
       end)
 
       assert Chat.health_check() == :ok
@@ -83,7 +83,7 @@ defmodule BranchedLLM.ChatTest do
 
     test "returns {:error, :unavailable} on non-200 status", %{bypass: bypass} do
       Bypass.expect(bypass, "GET", "/api/tags", fn conn ->
-        conn |> Conn.send_resp(503, "unavailable")
+        Conn.send_resp(conn, 503, "unavailable")
       end)
 
       assert Chat.health_check() == {:error, :unavailable}
@@ -137,7 +137,7 @@ defmodule BranchedLLM.ChatTest do
       _log =
         capture_log(fn ->
           result = Chat.send_message("Hi", context)
-          assert elem(result, 0) == :ok or elem(result, 0) == :error
+          assert elem(result, 0) in [:ok, :error]
         end)
     end
 

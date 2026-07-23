@@ -36,7 +36,11 @@
       #
       # Load and configure plugins here:
       #
-      plugins: [{CredoContrib, []}, {ExSlop, []}],
+      plugins: [
+        {CredoContrib, []},
+        {ExSlop, []},
+        {ExtraCredo, []}
+      ],
       #
       # If you create your own checks, you must specify the source files for
       # them here, so they can be loaded by Credo before running the analysis.
@@ -206,7 +210,66 @@
           {ExSlop.Check.Readability.ObviousComment, [additional_keywords: []]},
           {ExSlop.Check.Readability.StepComment, []},
           {ExSlop.Check.Readability.NarratorComment, []},
-          {ExSlop.Check.Readability.UnaliasedModuleUse, []}
+          {ExSlop.Check.Readability.UnaliasedModuleUse, []},
+
+          # Jump rules
+          {Jump.CredoChecks.VacuousTest, []},
+          {Jump.CredoChecks.TestHasNoAssertions, []},
+          {Jump.CredoChecks.WeakAssertion, []},
+          {Jump.CredoChecks.UnusedLiveViewAssign, [ignored_assigns: []]},
+          {Jump.CredoChecks.AssertElementSelectorCanNeverFail, []},
+          {Jump.CredoChecks.ConditionalAssertion, []},
+          {Jump.CredoChecks.TooManyAssertions, [max_assertions: 20]},
+
+          # Oeditus
+          # Error Handling
+          {OeditusCredo.Check.Warning.SilentErrorCase, []},
+          # Database & Performance
+          {OeditusCredo.Check.Warning.InefficientFilter, []},
+          {OeditusCredo.Check.Warning.NPlusOneQuery, []},
+          {OeditusCredo.Check.Warning.MissingPreload, []},
+          # LiveView & Concurrency
+          {OeditusCredo.Check.Warning.UnmanagedTask, []},
+          {OeditusCredo.Check.Warning.SyncOverAsync, []},
+          {OeditusCredo.Check.Warning.MissingHandleAsync, []},
+          {OeditusCredo.Check.Warning.MissingThrottle, []},
+          {OeditusCredo.Check.Warning.InlineJavascript, []},
+          # Readability
+          {OeditusCredo.Check.Readability.UnnecessaryInterpolatingSigil, []},
+          # Code Quality
+          {OeditusCredo.Check.Warning.DirectStructUpdate, []},
+          {OeditusCredo.Check.Warning.CallbackHell, [max_nesting: 2]},
+          {OeditusCredo.Check.Warning.BlockingInPlug, []},
+          {OeditusCredo.Check.Warning.UnsafeMapAccess, []},
+          # Refactoring Suggestions
+          {OeditusCredo.Check.Refactoring.SuggestFSM, []},
+          # Telemetry & Observability
+          {OeditusCredo.Check.Warning.TelemetryInRecursiveFunction, []},
+          {OeditusCredo.Check.Warning.MissingTelemetryInAuthPlug, []},
+          {OeditusCredo.Check.Warning.MissingTelemetryForExternalHttp, []},
+          # Security - Injection
+          {OeditusCredo.Check.Security.SQLInjection, []},
+          {OeditusCredo.Check.Security.OSCommandInjection, []},
+          {OeditusCredo.Check.Security.CodeInjection, []},
+          {OeditusCredo.Check.Security.XSSVulnerability, []},
+          # Security - Auth
+          {OeditusCredo.Check.Security.MissingAuthentication, []},
+          {OeditusCredo.Check.Security.MissingAuthorization, []},
+          {OeditusCredo.Check.Security.IncorrectAuthorization, []},
+          {OeditusCredo.Check.Security.InsecureDirectObjectReference, []},
+          # Security - Data Protection
+          {OeditusCredo.Check.Security.SensitiveDataExposure, []},
+          {OeditusCredo.Check.Security.HardcodedCredentials, []},
+          {OeditusCredo.Check.Security.UnsafeDeserialization, []},
+          # Security - Input & File Handling
+          {OeditusCredo.Check.Security.ImproperInputValidation, []},
+          {OeditusCredo.Check.Security.PathTraversal, []},
+          {OeditusCredo.Check.Security.UnrestrictedFileUpload, []},
+          # Security - Web
+          # {OeditusCredo.Check.Security.MissingCSRFProtection, []}, -- too many false positives
+          {OeditusCredo.Check.Security.SSRFVulnerability, []},
+          # Security - Race Conditions
+          {OeditusCredo.Check.Security.TOCTOU, []}
         ],
         disabled: [
           #

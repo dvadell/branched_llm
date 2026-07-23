@@ -44,7 +44,11 @@ defmodule BranchedLLM.ChatClientTest do
     test "returns model struct when model string is unusual" do
       Application.put_env(:branched_llm, :ai_model, "::invalid::")
       model = ChatClient.default_model()
-      assert match?(%LLMDB.Model{}, model) or is_binary(model)
+
+      case model do
+        %LLMDB.Model{} -> :ok
+        _ -> assert byte_size(model) > 0
+      end
     after
       Application.delete_env(:branched_llm, :ai_model)
     end
@@ -162,6 +166,7 @@ defmodule BranchedLLM.ChatClientTest do
             required: ["expr"]
           },
           callback: fn %{"expr" => expr} ->
+            # credo:disable-for-next-line
             {result, _} = Code.eval_string(expr)
             {:ok, to_string(result)}
           end

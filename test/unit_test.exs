@@ -161,6 +161,8 @@ defmodule BranchedLLM.ProviderConfigTest do
   end
 
   defp put_test_providers do
+    Application.delete_env(:branched_llm, :base_url)
+
     Application.put_env(:branched_llm, :providers,
       openai: [
         base_url: "http://openai.test:4000/v1",

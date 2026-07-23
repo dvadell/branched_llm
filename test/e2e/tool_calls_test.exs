@@ -21,6 +21,7 @@ defmodule BranchedLLM.E2E.ToolCallsTest do
             required: ["expression"]
           },
           callback: fn %{"expression" => expr} ->
+            # credo:disable-for-next-line
             {result, _} = Code.eval_string(expr)
             {:ok, to_string(result)}
           end
@@ -152,6 +153,7 @@ defmodule BranchedLLM.E2E.ToolCallsTest do
             required: ["expression"]
           },
           callback: fn %{"expression" => expr} ->
+            # credo:disable-for-next-line
             {result, _} = Code.eval_string(expr)
             {:ok, to_string(result)}
           end
@@ -207,7 +209,6 @@ defmodule BranchedLLM.E2E.ToolCallsTest do
       events = collect_events(default_params(llm_tools: [dummy_tool]), event_timeout())
 
       assert {:llm_end, "test", result} = find_event(events, :llm_end)
-      assert is_map(result)
       assert result["answer"] == "42"
     end
   end

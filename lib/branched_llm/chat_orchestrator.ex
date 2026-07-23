@@ -33,6 +33,26 @@ defmodule BranchedLLM.ChatOrchestrator do
 
   use Retry
 
+  @task_supervisor __MODULE__.TaskSupervisor
+
+  @doc false
+  def start_link(opts \\ []) do
+    {name, opts} = Keyword.pop(opts, :name, @task_supervisor)
+    Task.Supervisor.start_link(Keyword.put(opts, :name, name))
+  end
+
+  @doc false
+  defp ensure_started do
+    case Process.whereis(@task_supervisor) do
+      nil ->
+        {:ok, _pid} = start_link(name: @task_supervisor)
+        :ok
+
+      _pid ->
+        :ok
+    end
+  end
+
   @type llm_call_params :: %{
           required(:llm_context) => ReqLLM.Context.t(),
           required(:on_event) => function(),
@@ -53,7 +73,8 @@ defmodule BranchedLLM.ChatOrchestrator do
   """
   @spec run(llm_call_params()) :: {:ok, pid()}
   def run(params) do
-    Task.start(fn -> do_process(params) end)
+    ensure_started()
+    Task.Supervisor.start_child(@task_supervisor, fn -> do_process(params) end)
   end
 
   defp do_process(%{schema: schema} = params) when not is_nil(schema) do
@@ -86,7 +107,9 @@ defmodule BranchedLLM.ChatOrchestrator do
     Keyword.new([{:tools, Map.get(params, :llm_tools, [])}])
   end
 
-  @doc false
+  @doc """
+  Builds provider options for structured output from a JSON schema.
+  """
   @spec schema_provider_options(map()) :: keyword()
   def schema_provider_options(schema) do
     {:ok, compiled} = ReqLLM.Schema.compile(schema)

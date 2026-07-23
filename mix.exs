@@ -69,7 +69,10 @@ defmodule BranchedLLM.MixProject do
       {:mox, "~> 1.0", only: :test},
       {:bypass, "~> 2.1", only: :test},
       {:ex_slop, "~> 0.1", only: [:dev, :test], runtime: false},
-      {:credo_contrib, "~> 0.2.0", only: [:dev, :test], runtime: false}
+      {:credo_contrib, "~> 0.2.0", only: [:dev, :test], runtime: false},
+      {:extra_credo, github: "dvadell/extra_credo", only: [:dev, :test], runtime: false},
+      {:jump_credo_checks, "~> 0.4", only: [:dev], runtime: false},
+      {:oeditus_credo, "~> 0.8", only: [:dev, :test], runtime: false}
     ]
   end
 
