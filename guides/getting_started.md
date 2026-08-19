@@ -30,7 +30,7 @@ Configure your LLM provider in `config/config.exs`:
 
 ```elixir
 config :branched_llm,
-  ai_model: "ollama:cara-cpu",
+  ai_model: "openai:gpt-4o-mini",
   base_url: "http://localhost:11434"
 ```
 
@@ -61,7 +61,7 @@ context = Chat.new_context("You are a helpful assistant.")
 IO.puts(response)
 ```
 
-`Chat.send_message/3` returns the complete response text. Internally, it streams tokens but collects them before returning.
+`Chat.send_message/3` returns the complete response text. Internally, it streams tokens but collects them before returning. It waits up to 60 seconds by default; pass `:timeout` to bound the wait (e.g. `timeout: 5_000`), which returns an error if the provider doesn't respond in time.
 
 ### Streaming
 

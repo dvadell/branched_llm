@@ -48,7 +48,7 @@ Configure the LLM connection in `config/config.exs`:
 
 ```elixir
 config :branched_llm,
-  ai_model: System.get_env("LLM_MODEL") || "ollama:cara-cpu",
+  ai_model: System.get_env("LLM_MODEL") || "openai:gpt-4o-mini",
   base_url: System.get_env("LLM_BASE_URL") || "http://localhost:11434"
 ```
 
@@ -170,6 +170,11 @@ context = Chat.new_context("You are a helpful assistant.")
 {:ok, response, new_context} = Chat.send_message("What is Elixir?", context)
 IO.puts(response)
 ```
+
+`Chat.send_message/3` blocks until the full response is ready (default
+timeout: 60 seconds). Pass `:timeout` to bound the wait, e.g.
+`Chat.send_message("Hi", context, timeout: 5_000)` — on timeout it returns
+`{:error, "Timed out waiting for LLM response after 5000ms"}`.
 
 ### 3. Streaming with tools
 

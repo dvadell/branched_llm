@@ -11,7 +11,7 @@ defmodule BranchedLLM.Chat do
   All configuration is under `:branched_llm`:
 
       config :branched_llm,
-        ai_model: System.get_env("LLM_MODEL") || "ollama:cara-cpu",
+        ai_model: System.get_env("LLM_MODEL") || "openai:gpt-4o-mini",
         base_url: System.get_env("LLM_BASE_URL") || "http://localhost:11434"
   """
 
@@ -55,6 +55,7 @@ defmodule BranchedLLM.Chat do
     * `:tools` - A list of `ReqLLM.Tool` structs to provide to the LLM.
     * `:schema` - A JSON Schema map; when provided, the response is a validated map instead of raw text.
     * `:schema_max_retries` - Maximum retries on schema validation failure (default: 2).
+    * `:timeout` - Maximum time in milliseconds to wait for the LLM response (default: 60_000).
   """
   @impl true
   @spec send_message(String.t(), Context.t(), keyword()) ::
@@ -64,6 +65,7 @@ defmodule BranchedLLM.Chat do
     parent = self()
     ref = make_ref()
     schema = Keyword.get(opts, :schema)
+    timeout = Keyword.get(opts, :timeout, 60_000)
 
     on_event = fn
       {:llm_chunk, _id, chunk} -> send(parent, {ref, :chunk, chunk})
@@ -87,13 +89,13 @@ defmodule BranchedLLM.Chat do
       |> maybe_put_schema_max_retries_param(opts)
 
     {:ok, _pid} = BranchedLLM.ChatOrchestrator.run(params)
-    wait_for_sync_result(ref, "", updated_context, schema)
+    wait_for_sync_result(ref, "", updated_context, schema, timeout)
   end
 
-  defp wait_for_sync_result(ref, acc, context, nil) do
+  defp wait_for_sync_result(ref, acc, context, nil, timeout) do
     receive do
       {^ref, :chunk, chunk} ->
-        wait_for_sync_result(ref, acc <> chunk, context, nil)
+        wait_for_sync_result(ref, acc <> chunk, context, nil, timeout)
 
       {^ref, :end, full_text} ->
         {:ok, full_text, add_assistant_message(context, full_text)}
@@ -101,13 +103,13 @@ defmodule BranchedLLM.Chat do
       {^ref, :error, err} ->
         {:error, err}
     after
-      60_000 -> {:error, "Timed out waiting for LLM response"}
+      timeout -> {:error, "Timed out waiting for LLM response after #{timeout}ms"}
     end
   end
 
   # When a schema is provided, :llm_end delivers a validated map instead of
   # raw text — return it directly without concatenating chunks.
-  defp wait_for_sync_result(ref, _acc, context, _schema) do
+  defp wait_for_sync_result(ref, _acc, context, _schema, timeout) do
     receive do
       {^ref, :end, validated_map} when is_map(validated_map) ->
         {:ok, validated_map, context}
@@ -115,7 +117,7 @@ defmodule BranchedLLM.Chat do
       {^ref, :error, err} ->
         {:error, err}
     after
-      60_000 -> {:error, "Timed out waiting for LLM response"}
+      timeout -> {:error, "Timed out waiting for LLM response after #{timeout}ms"}
     end
   end
 

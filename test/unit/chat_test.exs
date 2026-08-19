@@ -162,6 +162,67 @@ defmodule BranchedLLM.ChatTest do
       assert {:ok, result, _new_context} = Chat.send_message("Great!", context, schema: schema)
       assert result["sentiment"] == "positive"
     end
+
+    test "honors a custom :timeout when the provider never responds" do
+      server = start_hang_server()
+      base_url = "http://localhost:#{server.port}/v1"
+
+      Application.put_env(:branched_llm, :base_url, base_url)
+      Application.put_env(:branched_llm, :ai_model, "ollama:test-model")
+
+      on_exit(fn ->
+        Application.delete_env(:branched_llm, :base_url)
+        Application.delete_env(:branched_llm, :ai_model)
+        close_hang_server(server)
+      end)
+
+      context = Chat.new_context("You are helpful.")
+
+      {elapsed_us, result} = :timer.tc(fn -> Chat.send_message("Hi", context, timeout: 1_000) end)
+
+      elapsed_ms = div(elapsed_us, 1000)
+
+      assert {:error, message} = result
+      assert message =~ "Timed out waiting for LLM response"
+      assert message =~ "1000"
+      assert elapsed_ms < 10_000, "expected the timeout to fire fast, took #{elapsed_ms}ms"
+    end
+  end
+
+  # ---------------------------------------------------------------------------
+  # Hang server — accepts a TCP connection and never responds, so the HTTP
+  # request hangs until Chat.send_message's :timeout fires. Bypass cannot model
+  # this (it verifies expectations by handler completion, so a never-returning
+  # handler fails teardown with "No HTTP request arrived").
+  # ---------------------------------------------------------------------------
+
+  defp start_hang_server do
+    {:ok, listen} =
+      :gen_tcp.listen(0, [:binary, packet: :raw, active: false, reuseaddr: true])
+
+    {:ok, port} = :inet.port(listen)
+
+    acceptor =
+      spawn_link(fn ->
+        case :gen_tcp.accept(listen) do
+          {:ok, socket} ->
+            receive do
+              :close ->
+                :gen_tcp.close(socket)
+                :gen_tcp.close(listen)
+            end
+
+          {:error, _reason} ->
+            :gen_tcp.close(listen)
+        end
+      end)
+
+    %{port: port, acceptor: acceptor, listen: listen}
+  end
+
+  defp close_hang_server(%{acceptor: acceptor}) do
+    send(acceptor, :close)
+    :ok
   end
 
   # ---------------------------------------------------------------------------

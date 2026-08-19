@@ -199,7 +199,8 @@ context = Chat.new_context("You are a weather assistant")
 # The LLM will call the weather tool and include the result in its response
 ```
 
-> **Warning:** `Chat.send_message/3` has a 60-second timeout. When tools are involved,
+> **Warning:** `Chat.send_message/3` has a default 60-second timeout (configurable
+> via the `:timeout` option, e.g. `timeout: 5_000`). When tools are involved,
 > the LLM must make two round-trips (tool call + final response), which can exceed this
 > limit with slower providers. Use `ChatOrchestrator` for reliable tool usage.
 ---

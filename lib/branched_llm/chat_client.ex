@@ -15,7 +15,7 @@ defmodule BranchedLLM.ChatClient do
   All configuration is under `:branched_llm`:
 
       config :branched_llm,
-        ai_model: System.get_env("LLM_MODEL") || "ollama:cara-cpu",
+        ai_model: System.get_env("LLM_MODEL") || "openai:gpt-4o-mini",
         base_url: System.get_env("LLM_BASE_URL") || "http://localhost:11434"
   """
 
@@ -81,10 +81,7 @@ defmodule BranchedLLM.ChatClient do
   @spec default_model() :: ReqLLM.model_input()
   @impl true
   def default_model do
-    model_string =
-      Application.get_env(:cara, :ai_model) ||
-        Application.get_env(:branched_llm, :ai_model, "ollama:cara-cpu")
-
+    model_string = Application.get_env(:branched_llm, :ai_model, "openai:gpt-4o-mini")
     resolve_model(model_string)
   end
 

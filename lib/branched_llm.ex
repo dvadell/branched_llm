@@ -18,7 +18,7 @@ defmodule BranchedLLM do
   ## Configuration
 
       config :branched_llm,
-        ai_model: System.get_env("LLM_MODEL") || "ollama:cara-cpu",
+        ai_model: System.get_env("LLM_MODEL") || "openai:gpt-4o-mini",
         base_url: System.get_env("LLM_BASE_URL") || "http://localhost:11434"
    
   """

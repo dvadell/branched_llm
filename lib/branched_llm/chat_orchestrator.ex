@@ -41,12 +41,16 @@ defmodule BranchedLLM.ChatOrchestrator do
     Task.Supervisor.start_link(Keyword.put(opts, :name, name))
   end
 
-  @doc false
+  # The TaskSupervisor is owned by the OTP application (BranchedLLM.Application).
+  # This fallback only guards against running without the app started (e.g.
+  # `mix test --no-start`); it is not the primary supervision path.
   defp ensure_started do
     case Process.whereis(@task_supervisor) do
       nil ->
-        {:ok, _pid} = start_link(name: @task_supervisor)
-        :ok
+        case start_link(name: @task_supervisor) do
+          {:ok, _pid} -> :ok
+          {:error, {:already_started, _pid}} -> :ok
+        end
 
       _pid ->
         :ok

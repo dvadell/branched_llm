@@ -32,13 +32,11 @@ defmodule BranchedLLM.ChatClientTest do
       Application.delete_env(:branched_llm, :ai_model)
     end
 
-    test "reads from :cara config as fallback" do
-      Application.put_env(:cara, :ai_model, "openai:gpt-4")
+    test "falls back to the default model when no config is set" do
+      Application.delete_env(:branched_llm, :ai_model)
       model = ChatClient.default_model()
       assert model.provider == :openai
-      assert model.id == "gpt-4"
-    after
-      Application.delete_env(:cara, :ai_model)
+      assert model.id == "gpt-4o-mini"
     end
 
     test "returns model struct when model string is unusual" do
