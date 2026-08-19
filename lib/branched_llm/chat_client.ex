@@ -135,10 +135,7 @@ defmodule BranchedLLM.ChatClient do
   @spec execute_tool(ReqLLM.Tool.t(), map()) :: {:ok, term()} | {:error, term()}
   def execute_tool(tool, args, opts \\ []) do
     cache_module = Keyword.get(opts, :cache, default_tool_cache())
-
-    maybe_with_span("tool_execution", %{tool: tool.name}, fn ->
-      do_execute_tool(tool, args, cache_module)
-    end)
+    do_execute_tool(tool, args, cache_module)
   end
 
   ## Private Functions
@@ -274,18 +271,5 @@ defmodule BranchedLLM.ChatClient do
       nil -> opts
       fun -> Keyword.put(opts, :on_finch_request, fun)
     end
-  end
-
-  # OpenTelemetry helpers
-  if Code.ensure_loaded?(OpenTelemetry.Tracer) do
-    require OpenTelemetry.Tracer
-
-    defp maybe_with_span(name, _attrs, fun) do
-      OpenTelemetry.Tracer.with_span name do
-        fun.()
-      end
-    end
-  else
-    defp maybe_with_span(_name, _attrs, fun), do: fun.()
   end
 end

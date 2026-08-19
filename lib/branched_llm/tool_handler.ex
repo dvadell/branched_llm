@@ -15,7 +15,6 @@ defmodule BranchedLLM.ToolHandler do
 
   alias ReqLLM.Context
   alias ReqLLM.ToolCall
-  require Logger
 
   @tool_usage_limit 10
 
